@@ -15,8 +15,13 @@ backend and measure the path your users actually use.
   natively on Hono, Next.js, Bun, Deno, Cloudflare Workers, SvelteKit… plus a Node `http`
   adapter for Express and friends. Or skip both and use the raw stream primitives.
 - **An open protocol** — three documented HTTP endpoints; implement them in any language.
-- **Real statistics** — average, min/max, jitter (RTT std dev), stability (throughput
-  coefficient of variation), and an explainable verdict with configurable thresholds.
+- **Real statistics** — average, min/max, p50/p90 percentiles, jitter (RTT std dev), stability
+  (throughput coefficient of variation), latency under load (bufferbloat), and an explainable
+  verdict with configurable thresholds.
+- **A modern methodology** — parallel connections saturate high-bandwidth links, each transfer
+  phase runs for a target duration with adaptively ramped request sizes (slow links move little
+  data, fast links move a lot), and concurrent latency probes measure the RTT while the link is
+  saturated.
 
 ## Packages
 
@@ -94,13 +99,34 @@ const result = await runSpeedtest({
   onSample: sample => console.log(sample),
 })
 
-// result: {timestamp, target, latency: {avgMs, minMs, maxMs, jitterMs},
-//          download: {avgMbps, minMbps, maxMbps, stabilityCv}, upload: {…},
+// result: {timestamp, target,
+//          latency: {avgMs, minMs, maxMs, p50Ms, p90Ms, jitterMs},
+//          download: {avgMbps, minMbps, maxMbps, p50Mbps, p90Mbps, stabilityCv}, upload: {…},
+//          loadedLatency: {download: {…}, upload: {…}, bufferbloatMs},
 //          verdict: 'optimal' | 'good' | 'unstable' | 'critical'}
 ```
 
-Tune the run with `config` (ping count, transfer size, upload chunks, sample window, phase
-timeout) and the verdict with `thresholds`; defaults live in `@staffetta/core`.
+Tune the run with `config` and the verdict with `thresholds`; defaults live in `@staffetta/core`:
+
+```ts
+config: {
+  pingCount: 16,                          // measured pings (plus a discarded warm-up)
+  transferDurationMs: 8000,               // target duration of each transfer phase
+  warmupMs: 1000,                         // initial slice excluded from the stats (slow start + ramp)
+  initialRequestSizeBytes: 262_144,       // first request of the adaptive size ramp (256 KiB)
+  maxRequestSizeBytes: 67_108_864,        // ramp cap (64 MiB) — keep it under the server's maxSizeBytes
+  connections: 3,                         // parallel streams per transfer phase
+  loadedPingIntervalMs: 250,              // latency probes under load; 0 disables loadedLatency
+  sampleIntervalMs: 250,                  // throughput sampling window
+  phaseTimeoutMs: 60_000,                 // safety timeout per phase
+}
+```
+
+**Latency under load (bufferbloat).** While download and upload run, the client keeps probing
+the ping endpoint. `loadedLatency` reports the RTT stats per direction plus `bufferbloatMs` —
+the worst-direction median loaded RTT minus the idle median. A connection can be fast and still
+unusable for calls or gaming when its buffers bloat under load; the verdict accounts for it
+(`optimalMaxBufferbloatMs`, `unstableMinBufferbloatMs` in the thresholds).
 
 ## React
 
@@ -139,9 +165,17 @@ the upload time base because it excludes the response round trip; servers that c
 it reply `0` and the client falls back to its own clock.
 
 **Why chunked uploads?** Upload progress is not observable with `fetch()` (request-body
-streaming needs HTTP/2 plus `duplex: 'half'`), so the client sends the payload as sequential
-POSTs on the same keep-alive connection — each chunk yields one throughput sample, enough for
-min/max and the stability CV.
+streaming needs HTTP/2 plus `duplex: 'half'`), so each upload stream sends sequential POSTs on
+its keep-alive connection, ramping the chunk size like the download does. Completed chunks are
+spread over their duration for the windowed stats, and the ramp is capped to the remaining time
+so the last chunk does not run long past the phase deadline.
+
+**How the client drives the endpoints.** The protocol stays three plain endpoints; the
+methodology lives client-side: `connections` parallel streams request back to back for
+`transferDurationMs`, each request sized to last ~1 s at the observed rate (in-flight downloads
+are aborted at the deadline; the received bytes still count). The first `warmupMs` are excluded
+from the statistics, and the ping endpoint doubles as the under-load latency probe — another
+reason it stays anonymous and instant.
 
 ## Development
 

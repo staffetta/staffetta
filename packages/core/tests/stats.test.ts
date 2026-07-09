@@ -3,11 +3,14 @@ import {describe, it} from 'node:test'
 import {
   bytesToMbps,
   computeLatencyStats,
+  computeLoadedLatency,
   computeMean,
+  computePercentile,
   computeStdDev,
   computeThroughputSamplesMbps,
   computeThroughputStats,
   roundTo,
+  spreadTransferChunks,
 } from '../src/index.ts'
 
 describe('bytesToMbps', () => {
@@ -42,11 +45,68 @@ describe('roundTo', () => {
   })
 })
 
+describe('computePercentile', () => {
+  it('interpolates linearly between the two nearest ranks', () => {
+    assert.equal(computePercentile([10, 20, 30], 50), 20)
+    assert.equal(computePercentile([10, 20, 30], 90), 28)
+    assert.equal(computePercentile([30, 10, 20, 40], 25), 17.5)
+  })
+
+  it('handles edge inputs', () => {
+    assert.equal(computePercentile([], 50), 0)
+    assert.equal(computePercentile([42], 90), 42)
+    assert.equal(computePercentile([10, 20], 0), 10)
+    assert.equal(computePercentile([10, 20], 100), 20)
+  })
+})
+
 describe('computeLatencyStats', () => {
-  it('reports avg/min/max/jitter rounded to one decimal', () => {
+  it('reports avg/min/max/percentiles/jitter rounded to one decimal', () => {
     const stats = computeLatencyStats([10, 20, 30])
 
-    assert.deepEqual(stats, {avgMs: 20, minMs: 10, maxMs: 30, jitterMs: 8.2})
+    assert.deepEqual(stats, {avgMs: 20, minMs: 10, maxMs: 30, p50Ms: 20, p90Ms: 28, jitterMs: 8.2})
+  })
+})
+
+describe('computeLoadedLatency', () => {
+  it('reports the worst-direction median increase over the idle median', () => {
+    const idle = computeLatencyStats([10, 20, 30]) // p50 = 20
+    const loaded = computeLoadedLatency(idle, [100, 120, 140], [40, 50, 60])
+
+    assert.ok(loaded)
+    assert.equal(loaded.download.p50Ms, 120)
+    assert.equal(loaded.upload.p50Ms, 50)
+    assert.equal(loaded.bufferbloatMs, 100)
+  })
+
+  it('floors the increase at 0 and requires samples on both directions', () => {
+    const idle = computeLatencyStats([50, 50, 50])
+
+    assert.equal(computeLoadedLatency(idle, [10, 10], [10, 10])?.bufferbloatMs, 0)
+    assert.equal(computeLoadedLatency(idle, [], [10, 10]), undefined)
+    assert.equal(computeLoadedLatency(idle, [10, 10], []), undefined)
+  })
+})
+
+describe('spreadTransferChunks', () => {
+  it('spreads the bytes uniformly over the transfer duration', () => {
+    const chunks = spreadTransferChunks({bytes: 300, endMs: 1000, elapsedMs: 300, intervalMs: 100})
+
+    assert.equal(chunks.length, 3)
+    assert.deepEqual(
+      chunks.map(it => it.bytes),
+      [100, 100, 100],
+    )
+    assert.deepEqual(
+      chunks.map(it => it.atMs),
+      [800, 900, 1000],
+    )
+  })
+
+  it('degrades to a single chunk on degenerate durations', () => {
+    assert.deepEqual(spreadTransferChunks({bytes: 100, endMs: 50, elapsedMs: 0, intervalMs: 100}), [
+      {bytes: 100, atMs: 50},
+    ])
   })
 })
 

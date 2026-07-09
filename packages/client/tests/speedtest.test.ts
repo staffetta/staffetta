@@ -23,34 +23,67 @@ describe('runSpeedtest', () => {
   it('runs the whole relay and reports a coherent result', async () => {
     const phases: Array<string> = []
     let pingSamples = 0
-    let uploadSamples = 0
+    let downloadThroughputSamples = 0
+    let uploadThroughputSamples = 0
+    let loadedPingSamples = 0
 
     const result = await runSpeedtest({
       baseUrl,
       config: {
         pingCount: 3,
-        transferSizeBytes: 512 * 1024,
-        uploadChunkCount: 2,
+        transferDurationMs: 400,
+        warmupMs: 50,
+        initialRequestSizeBytes: 64 * 1024,
+        maxRequestSizeBytes: 4 * 1024 * 1024,
+        connections: 2,
+        loadedPingIntervalMs: 25,
         sampleIntervalMs: 20,
         phaseTimeoutMs: 30_000,
       },
       onPhase: phase => phases.push(phase),
       onSample: sample => {
         if (sample.phase === 'ping') pingSamples += 1
-        if (sample.phase === 'upload') uploadSamples += 1
+        else if (sample.kind === 'loaded-ping') loadedPingSamples += 1
+        else if (sample.phase === 'download') downloadThroughputSamples += 1
+        else uploadThroughputSamples += 1
       },
     })
 
     assert.deepEqual(phases, ['ping', 'download', 'upload'])
     assert.equal(pingSamples, 3)
-    assert.equal(uploadSamples, 2)
+    assert.ok(downloadThroughputSamples > 0)
+    assert.ok(uploadThroughputSamples > 0)
+    assert.ok(loadedPingSamples > 0)
 
     assert.ok(result.latency.avgMs >= 0)
-    assert.ok(result.latency.minMs <= result.latency.maxMs)
+    assert.ok(result.latency.minMs <= result.latency.p50Ms)
+    assert.ok(result.latency.p50Ms <= result.latency.p90Ms)
+    assert.ok(result.latency.p90Ms <= result.latency.maxMs)
     assert.ok(result.download.avgMbps > 0)
     assert.ok(result.upload.avgMbps > 0)
+    assert.ok(result.loadedLatency)
+    assert.ok(result.loadedLatency.bufferbloatMs >= 0)
+    assert.ok(result.loadedLatency.download.avgMs > 0)
+    assert.ok(result.loadedLatency.upload.avgMs > 0)
     assert.equal(result.target, baseUrl)
     assert.ok(['optimal', 'good', 'unstable', 'critical'].includes(result.verdict))
+  })
+
+  it('omits the loaded latency when the probes are disabled', async () => {
+    const result = await runSpeedtest({
+      baseUrl,
+      config: {
+        pingCount: 1,
+        transferDurationMs: 100,
+        warmupMs: 0,
+        initialRequestSizeBytes: 16 * 1024,
+        connections: 1,
+        loadedPingIntervalMs: 0,
+        phaseTimeoutMs: 30_000,
+      },
+    })
+
+    assert.equal(result.loadedLatency, undefined)
   })
 
   it('resolves custom headers before each request', async () => {
@@ -62,11 +95,20 @@ describe('runSpeedtest', () => {
         resolved += 1
         return {authorization: 'Bearer test'}
       },
-      config: {pingCount: 1, transferSizeBytes: 1024, uploadChunkCount: 1, phaseTimeoutMs: 30_000},
+      config: {
+        pingCount: 1,
+        transferDurationMs: 50,
+        warmupMs: 0,
+        initialRequestSizeBytes: 16 * 1024,
+        connections: 1,
+        loadedPingIntervalMs: 0,
+        phaseTimeoutMs: 30_000,
+      },
     })
 
-    // Warm-up + 1 ping + 1 download + 1 upload.
-    assert.equal(resolved, 4)
+    // At least warm-up + 1 ping + 1 download + 1 upload; the duration-based
+    // transfer phases issue as many requests as fit in the window.
+    assert.ok(resolved >= 4)
   })
 
   it('rejects with an abort error when the signal fires', async () => {
@@ -74,7 +116,7 @@ describe('runSpeedtest', () => {
     const pending = runSpeedtest({
       baseUrl,
       signal: abortController.signal,
-      config: {pingCount: 50, transferSizeBytes: 1024, phaseTimeoutMs: 30_000},
+      config: {pingCount: 50, transferDurationMs: 100, phaseTimeoutMs: 30_000},
     })
 
     abortController.abort()
@@ -87,7 +129,7 @@ describe('runSpeedtest', () => {
       runSpeedtest({
         baseUrl,
         paths: {ping: '/nowhere'},
-        config: {pingCount: 1, transferSizeBytes: 1024, phaseTimeoutMs: 5000},
+        config: {pingCount: 1, transferDurationMs: 100, phaseTimeoutMs: 5000},
       }),
       /speedtest ping request failed with HTTP 404/,
     )
