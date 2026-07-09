@@ -124,6 +124,20 @@ describe('computeThroughputStats', () => {
 
     assert.equal(stats.stabilityCv, 0)
   })
+
+  it('excludes the single best and worst sample from the CV, keeping raw min/max', () => {
+    const stats = computeThroughputStats([10, 10, 10, 10, 10, 30])
+
+    assert.equal(stats.stabilityCv, 0)
+    assert.equal(stats.minMbps, 10)
+    assert.equal(stats.maxMbps, 30)
+  })
+
+  it('does not trim the CV when there are too few samples', () => {
+    const noisy = computeThroughputStats([10, 10, 10, 30])
+
+    assert.ok(noisy.stabilityCv > 0)
+  })
 })
 
 describe('computeThroughputSamplesMbps', () => {
@@ -140,6 +154,20 @@ describe('computeThroughputSamplesMbps', () => {
     assert.equal(samples[0], 10)
     assert.equal(samples[1], 0)
     assert.equal(samples[2], 10)
+  })
+
+  it('merges the trailing remainder into the last window instead of a noisy partial window', () => {
+    // 250 ms over 100 ms windows → 2 windows, the last one 150 ms long. The chunk at 240 ms
+    // would rate 20 Mbps over a 50 ms partial window; over the merged window it rates 6.67.
+    const samples = computeThroughputSamplesMbps([{bytes: 125_000, atMs: 240}], {
+      startMs: 0,
+      endMs: 250,
+      intervalMs: 100,
+    })
+
+    assert.equal(samples.length, 2)
+    assert.equal(samples[0], 0)
+    assert.ok(samples[1] && Math.abs(samples[1] - (125_000 * 8) / 1000 / 150) < 1e-9)
   })
 
   it('returns no samples on a degenerate time range', () => {

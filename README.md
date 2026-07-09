@@ -16,8 +16,8 @@ backend and measure the path your users actually use.
   adapter for Express and friends. Or skip both and use the raw stream primitives.
 - **An open protocol** — three documented HTTP endpoints; implement them in any language.
 - **Real statistics** — average, min/max, p50/p90 percentiles, jitter (RTT std dev), stability
-  (throughput coefficient of variation), latency under load (bufferbloat), and an explainable
-  verdict with configurable thresholds.
+  (trimmed coefficient of variation of the throughput windows), latency under load
+  (bufferbloat), and an explainable verdict with configurable thresholds.
 - **A modern methodology** — parallel connections saturate high-bandwidth links, each transfer
   phase runs for a target duration with adaptively ramped request sizes (slow links move little
   data, fast links move a lot), and concurrent latency probes measure the RTT while the link is

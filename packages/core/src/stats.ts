@@ -25,6 +25,11 @@ export function computeThroughputStats(
   avgMbps?: undefined | number,
 ): SpeedtestThroughputStats {
   const mean = computeMean(samplesMbps)
+  // The CV drives the verdict, so it excludes the single best and worst window: an isolated
+  // sampling artifact (a burst or a scheduling gap of the harness) is not instability, a
+  // pattern of dips is. min/max stay raw — they are descriptive, not judged.
+  const stabilitySamples = trimExtremes(samplesMbps)
+  const stabilityMean = computeMean(stabilitySamples)
 
   return {
     avgMbps: roundTo(avgMbps ?? mean, 2),
@@ -32,8 +37,16 @@ export function computeThroughputStats(
     maxMbps: roundTo(Math.max(...samplesMbps), 2),
     p50Mbps: roundTo(computePercentile(samplesMbps, 50), 2),
     p90Mbps: roundTo(computePercentile(samplesMbps, 90), 2),
-    stabilityCv: roundTo(mean > 0 ? computeStdDev(samplesMbps) / mean : 0, 3),
+    stabilityCv: roundTo(stabilityMean > 0 ? computeStdDev(stabilitySamples) / stabilityMean : 0, 3),
   }
+}
+
+/** Drops the single lowest and highest value; too few samples pass through untrimmed. */
+function trimExtremes(values: Array<number>): Array<number> {
+  if (values.length < 5) {
+    return values
+  }
+  return [...values].sort((a, b) => a - b).slice(1, -1)
 }
 
 /**
@@ -90,7 +103,9 @@ export function spreadTransferChunks(args: {
 /**
  * Buckets the received chunks into fixed time windows and returns the throughput of each
  * window. Windows without data count as 0 Mbps: a stall is instability, not a missing sample.
- * The last window uses its real (shorter) duration.
+ * The last window absorbs the trailing remainder (running interval..2×interval long): a short
+ * partial window would turn the few bytes landing there into a noisy rate spike, skewing
+ * min/max/percentiles/CV.
  */
 export function computeThroughputSamplesMbps(
   chunks: Array<SpeedtestTransferChunk>,
@@ -103,7 +118,7 @@ export function computeThroughputSamplesMbps(
     return []
   }
 
-  const windowsCount = Math.ceil(totalMs / intervalMs)
+  const windowsCount = Math.max(1, Math.floor(totalMs / intervalMs))
   const windowsBytes = Array.from({length: windowsCount}, () => 0)
 
   for (const chunk of chunks) {

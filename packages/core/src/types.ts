@@ -68,7 +68,11 @@ export interface SpeedtestThroughputStats {
   p50Mbps: number
   /** 90th percentile of the windowed throughput samples. */
   p90Mbps: number
-  /** Coefficient of variation (standard deviation / mean) of the throughput samples. */
+  /**
+   * Coefficient of variation (standard deviation / mean) of the throughput samples, computed
+   * excluding the single best and worst window: an isolated sampling artifact is not
+   * instability, a pattern of dips is.
+   */
   stabilityCv: number
 }
 
