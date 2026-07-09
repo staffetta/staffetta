@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import {createServer, type Server} from 'node:http'
 import {after, before, describe, it} from 'node:test'
 import {createSpeedtestNodeListener} from '@staffetta/server/node'
-import {runSpeedtest} from '../src/index.ts'
+import {runSpeedtest, SpeedtestTimeoutError} from '../src/index.ts'
 
 // End-to-end: the real client engine against the real Node adapter over a loopback socket.
 describe('runSpeedtest', () => {
@@ -109,6 +109,49 @@ describe('runSpeedtest', () => {
     // At least warm-up + 1 ping + 1 download + 1 upload; the duration-based
     // transfer phases issue as many requests as fit in the window.
     assert.ok(resolved >= 4)
+  })
+
+  it('reports the partial result when a phase times out', async () => {
+    // Ping and download work (delegated to the real listener); POSTs hang without replying,
+    // so the upload phase stalls until its safety timeout.
+    const listener = createSpeedtestNodeListener()
+    const hangingServer = createServer((request, response) => {
+      if (request.method !== 'POST') {
+        listener(request, response)
+      }
+    })
+    await new Promise<void>(resolve => hangingServer.listen(0, '127.0.0.1', resolve))
+    const hangingAddress = hangingServer.address()
+    assert.ok(hangingAddress && typeof hangingAddress === 'object')
+
+    try {
+      await assert.rejects(
+        runSpeedtest({
+          baseUrl: `http://127.0.0.1:${hangingAddress.port}`,
+          config: {
+            pingCount: 2,
+            transferDurationMs: 200,
+            warmupMs: 0,
+            initialRequestSizeBytes: 16 * 1024,
+            connections: 1,
+            loadedPingIntervalMs: 25,
+            sampleIntervalMs: 20,
+            phaseTimeoutMs: 800,
+          },
+        }),
+        (error: unknown) => {
+          assert.ok(error instanceof SpeedtestTimeoutError)
+          assert.equal(error.partial.timedOutPhase, 'upload')
+          assert.ok(error.partial.latency && error.partial.latency.avgMs >= 0)
+          assert.ok(error.partial.download && error.partial.download.avgMbps > 0)
+          assert.equal(error.partial.upload, undefined) // No POST completed: nothing to report.
+          return true
+        },
+      )
+    } finally {
+      hangingServer.closeAllConnections()
+      await new Promise<void>((resolve, reject) => hangingServer.close(error => (error ? reject(error) : resolve())))
+    }
   })
 
   it('rejects with an abort error when the signal fires', async () => {

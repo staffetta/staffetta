@@ -12,6 +12,7 @@ import {
   SpeedtestDefaultPaths,
   SpeedtestDefaultThresholds,
   type SpeedtestLatencyStats,
+  type SpeedtestPartialResult,
   type SpeedtestPaths,
   type SpeedtestPhase,
   type SpeedtestProgressSample,
@@ -45,8 +46,41 @@ export interface SpeedtestClientOptions {
 }
 
 /**
+ * A phase safety timeout fired: the test is over, but `partial` carries the completed phases
+ * plus whatever the interrupted phase measured before stalling — enough to see, for example,
+ * that ping and download were fine and the upload is what hangs.
+ */
+export class SpeedtestTimeoutError extends Error {
+  override readonly name = 'SpeedtestTimeoutError'
+  readonly partial: SpeedtestPartialResult
+
+  constructor(partial: SpeedtestPartialResult) {
+    super(`speedtest ${partial.timedOutPhase} phase timed out`)
+    this.partial = partial
+  }
+}
+
+interface SpeedtestPhaseSalvage {
+  latency?: undefined | SpeedtestLatencyStats
+  throughput?: undefined | SpeedtestThroughputStats
+  loadedRttSamplesMs?: undefined | Array<number>
+}
+
+/** Internal marker thrown by a phase when its safety timeout fires, carrying the salvage. */
+class SpeedtestPhaseTimeout {
+  readonly phase: SpeedtestPhase
+  readonly salvage: SpeedtestPhaseSalvage
+
+  constructor(phase: SpeedtestPhase, salvage: SpeedtestPhaseSalvage) {
+    this.phase = phase
+    this.salvage = salvage
+  }
+}
+
+/**
  * Runs the whole relay (ping → download → upload) and resolves with the measured result.
- * Rejects with the underlying error on failure, timeout (`TimeoutError`) or abort.
+ * Rejects with {@link SpeedtestTimeoutError} (carrying the partial result) on a phase timeout,
+ * or with the underlying error on failure or abort.
  */
 export async function runSpeedtest(options: SpeedtestClientOptions): Promise<SpeedtestResult> {
   const context: SpeedtestContext = {
@@ -59,14 +93,25 @@ export async function runSpeedtest(options: SpeedtestClientOptions): Promise<Spe
     onSample: options.onSample,
   }
 
-  options.onPhase?.('ping')
-  const latency = await runPingPhase(context)
+  let latency: undefined | SpeedtestLatencyStats
+  let download: undefined | TransferPhaseOutcome
+  let upload: undefined | TransferPhaseOutcome
 
-  options.onPhase?.('download')
-  const download = await runDownloadPhase(context)
+  try {
+    options.onPhase?.('ping')
+    latency = await runPingPhase(context)
 
-  options.onPhase?.('upload')
-  const upload = await runUploadPhase(context)
+    options.onPhase?.('download')
+    download = await runDownloadPhase(context)
+
+    options.onPhase?.('upload')
+    upload = await runUploadPhase(context)
+  } catch (error) {
+    if (error instanceof SpeedtestPhaseTimeout) {
+      throw new SpeedtestTimeoutError(assemblePartialResult(context, error, {latency, download}))
+    }
+    throw error
+  }
 
   const loadedLatency = computeLoadedLatency(latency, download.loadedRttSamplesMs, upload.loadedRttSamplesMs)
 
@@ -86,20 +131,28 @@ export async function runSpeedtest(options: SpeedtestClientOptions): Promise<Spe
 
 async function runPingPhase(context: SpeedtestContext): Promise<SpeedtestLatencyStats> {
   const {config, onSample} = context
-  const signal = createPhaseSignal(context)
-
-  // Warm-up request, not measured: keeps the initial TCP/TLS connection setup out of the samples.
-  await requestPing(context, signal)
-
+  const phase = createPhaseSignal(context)
   const rttSamplesMs: Array<number> = []
 
-  for (let idx = 0; idx < config.pingCount; ++idx) {
-    const startedAt = performance.now()
-    await requestPing(context, signal)
-    const rttMs = performance.now() - startedAt
+  try {
+    // Warm-up request, not measured: keeps the initial TCP/TLS connection setup out of the samples.
+    await requestPing(context, phase.signal)
 
-    rttSamplesMs.push(rttMs)
-    onSample?.({phase: 'ping', seq: idx + 1, rttMs: roundTo(rttMs, 1)})
+    for (let idx = 0; idx < config.pingCount; ++idx) {
+      const startedAt = performance.now()
+      await requestPing(context, phase.signal)
+      const rttMs = performance.now() - startedAt
+
+      rttSamplesMs.push(rttMs)
+      onSample?.({phase: 'ping', seq: idx + 1, rttMs: roundTo(rttMs, 1)})
+    }
+  } catch (error) {
+    if (phase.timedOut()) {
+      throw new SpeedtestPhaseTimeout('ping', {
+        latency: rttSamplesMs.length > 0 ? computeLatencyStats(rttSamplesMs) : undefined,
+      })
+    }
+    throw error
   }
 
   return computeLatencyStats(rttSamplesMs)
@@ -113,11 +166,11 @@ async function runPingPhase(context: SpeedtestContext): Promise<SpeedtestLatency
  */
 async function runDownloadPhase(context: SpeedtestContext): Promise<TransferPhaseOutcome> {
   const {config} = context
-  const phaseSignal = createPhaseSignal(context)
+  const phase = createPhaseSignal(context)
   // Separate deadline controller: hitting the deadline is the normal end of the phase, not an error.
   const deadlineController = new AbortController()
-  const requestSignal = AbortSignal.any([phaseSignal, deadlineController.signal])
-  const sampler = startLoadedPingSampler(context, 'download', phaseSignal)
+  const requestSignal = AbortSignal.any([phase.signal, deadlineController.signal])
+  const sampler = startLoadedPingSampler(context, 'download', phase.signal)
 
   const startMs = performance.now()
   const deadlineMs = startMs + config.transferDurationMs
@@ -156,7 +209,7 @@ async function runDownloadPhase(context: SpeedtestContext): Promise<TransferPhas
           progress.add(value.byteLength, nowMs)
         }
       } catch (error) {
-        if (deadlineController.signal.aborted && !phaseSignal.aborted) {
+        if (deadlineController.signal.aborted && !phase.signal.aborted) {
           break // Deadline hit mid-transfer: normal completion, the received bytes are counted.
         }
         throw error
@@ -173,6 +226,14 @@ async function runDownloadPhase(context: SpeedtestContext): Promise<TransferPhas
 
   try {
     await Promise.all(Array.from({length: Math.max(1, config.connections)}, runStream))
+  } catch (error) {
+    if (phase.timedOut()) {
+      throw new SpeedtestPhaseTimeout(
+        'download',
+        await salvageTransferPhase({chunks, sampler, startMs, deadlineMs, context}),
+      )
+    }
+    throw error
   } finally {
     clearTimeout(deadlineTimer)
   }
@@ -197,8 +258,8 @@ async function runDownloadPhase(context: SpeedtestContext): Promise<TransferPhas
  */
 async function runUploadPhase(context: SpeedtestContext): Promise<TransferPhaseOutcome> {
   const {config} = context
-  const phaseSignal = createPhaseSignal(context)
-  const sampler = startLoadedPingSampler(context, 'upload', phaseSignal)
+  const phase = createPhaseSignal(context)
+  const sampler = startLoadedPingSampler(context, 'upload', phase.signal)
 
   const startMs = performance.now()
   const deadlineMs = startMs + config.transferDurationMs
@@ -217,7 +278,7 @@ async function runUploadPhase(context: SpeedtestContext): Promise<TransferPhaseO
       const payload = payloadPool.slice(0, chunkSizeBytes, 'application/octet-stream')
 
       const sentAt = performance.now()
-      const reply = await requestUpload(context, payload, phaseSignal)
+      const reply = await requestUpload(context, payload, phase.signal)
       const nowMs = performance.now()
       const clientElapsedMs = nowMs - sentAt
       const elapsedMs = reply.serverElapsedMs > 0 ? reply.serverElapsedMs : clientElapsedMs
@@ -241,7 +302,17 @@ async function runUploadPhase(context: SpeedtestContext): Promise<TransferPhaseO
     }
   }
 
-  await Promise.all(Array.from({length: Math.max(1, config.connections)}, runStream))
+  try {
+    await Promise.all(Array.from({length: Math.max(1, config.connections)}, runStream))
+  } catch (error) {
+    if (phase.timedOut()) {
+      throw new SpeedtestPhaseTimeout(
+        'upload',
+        await salvageTransferPhase({chunks, sampler, startMs, deadlineMs, context}),
+      )
+    }
+    throw error
+  }
 
   const endMs = performance.now()
   const loadedRttSamplesMs = await sampler.stop()
@@ -253,6 +324,51 @@ async function runUploadPhase(context: SpeedtestContext): Promise<TransferPhaseO
 }
 
 // Fragments ///////////////////////////////////////////////////////////////////
+
+/**
+ * What a timed-out transfer phase still knows: throughput stats over the chunks received up to
+ * the phase deadline (the stalled tail past it would only dilute them) and the loaded-latency
+ * probes collected so far.
+ */
+async function salvageTransferPhase(args: {
+  chunks: Array<SpeedtestTransferChunk>
+  sampler: {stop: () => Promise<Array<number>>}
+  startMs: number
+  deadlineMs: number
+  context: SpeedtestContext
+}): Promise<{throughput: undefined | SpeedtestThroughputStats; loadedRttSamplesMs: Array<number>}> {
+  const {chunks, sampler, startMs, deadlineMs, context} = args
+  const endMs = Math.min(performance.now(), deadlineMs)
+  const loadedRttSamplesMs = await sampler.stop()
+
+  return {
+    throughput: chunks.length > 0 ? computeTransferStats(chunks, {startMs, endMs, config: context.config}) : undefined,
+    loadedRttSamplesMs,
+  }
+}
+
+/** Builds the partial result from the completed phases plus the interrupted phase's salvage. */
+function assemblePartialResult(
+  context: SpeedtestContext,
+  timeout: SpeedtestPhaseTimeout,
+  completed: {latency: undefined | SpeedtestLatencyStats; download: undefined | TransferPhaseOutcome},
+): SpeedtestPartialResult {
+  const latency = completed.latency ?? timeout.salvage.latency
+  const downloadLoadedRtts =
+    completed.download?.loadedRttSamplesMs ??
+    (timeout.phase === 'download' ? (timeout.salvage.loadedRttSamplesMs ?? []) : [])
+  const uploadLoadedRtts = timeout.phase === 'upload' ? (timeout.salvage.loadedRttSamplesMs ?? []) : []
+
+  return {
+    timestamp: new Date().toISOString(),
+    target: context.baseUrl,
+    timedOutPhase: timeout.phase,
+    latency,
+    download: completed.download?.throughput ?? (timeout.phase === 'download' ? timeout.salvage.throughput : undefined),
+    upload: timeout.phase === 'upload' ? timeout.salvage.throughput : undefined,
+    loadedLatency: latency && computeLoadedLatency(latency, downloadLoadedRtts, uploadLoadedRtts),
+  }
+}
 
 /**
  * Windowed stats over the received chunks, skipping the configured warm-up (TCP slow start and
@@ -414,9 +530,14 @@ async function request(
   })
 }
 
-function createPhaseSignal(context: SpeedtestContext): AbortSignal {
+function createPhaseSignal(context: SpeedtestContext): {signal: AbortSignal; timedOut: () => boolean} {
   const timeoutSignal = AbortSignal.timeout(context.config.phaseTimeoutMs)
-  return context.userSignal ? AbortSignal.any([context.userSignal, timeoutSignal]) : timeoutSignal
+
+  return {
+    signal: context.userSignal ? AbortSignal.any([context.userSignal, timeoutSignal]) : timeoutSignal,
+    // A user abort racing the timeout stays an abort: only the timeout signal marks a timeout.
+    timedOut: () => timeoutSignal.aborted && !context.userSignal?.aborted,
+  }
 }
 
 function assertResponseOk(response: Response, phase: SpeedtestPhase) {

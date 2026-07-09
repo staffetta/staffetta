@@ -45,7 +45,7 @@ export const SpeedtestDefaultConfig: SpeedtestConfig = {
   connections: 3,
   loadedPingIntervalMs: 250,
   sampleIntervalMs: 250,
-  phaseTimeoutMs: 60_000,
+  phaseTimeoutMs: 120_000,
 }
 
 export interface SpeedtestLatencyStats {
@@ -113,6 +113,23 @@ export interface SpeedtestResult {
   /** Absent when the probes are disabled (`loadedPingIntervalMs: 0`) or produced no samples. */
   loadedLatency?: undefined | SpeedtestLoadedLatency
   verdict: SpeedtestVerdict
+}
+
+/**
+ * What was measured before a phase timed out: the completed phases plus whatever the
+ * interrupted phase collected. No verdict — it would judge an incomplete measurement.
+ */
+export interface SpeedtestPartialResult {
+  /** ISO 8601. */
+  timestamp: string
+  /** Base URL of the server under test. */
+  target: string
+  /** The phase whose safety timeout fired. */
+  timedOutPhase: SpeedtestPhase
+  latency?: undefined | SpeedtestLatencyStats
+  download?: undefined | SpeedtestThroughputStats
+  upload?: undefined | SpeedtestThroughputStats
+  loadedLatency?: undefined | SpeedtestLoadedLatency
 }
 
 /** One received chunk, timestamped for the fixed-window throughput sampling. */

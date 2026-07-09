@@ -118,9 +118,16 @@ config: {
   connections: 3,                         // parallel streams per transfer phase
   loadedPingIntervalMs: 250,              // latency probes under load; 0 disables loadedLatency
   sampleIntervalMs: 250,                  // throughput sampling window
-  phaseTimeoutMs: 60_000,                 // safety timeout per phase
+  phaseTimeoutMs: 120_000,                // safety timeout per phase
 }
 ```
+
+**Timeouts keep what they measured.** When a phase's safety timeout fires (e.g. an upload POST
+that never completes on a dying connection), `runSpeedtest` rejects with `SpeedtestTimeoutError`,
+whose `partial` field carries the completed phases plus whatever the interrupted phase collected
+— enough to see that ping and download were fine and the upload is what hangs. No verdict is
+computed for a partial result. User aborts and network failures reject with the underlying error
+as before.
 
 **Latency under load (bufferbloat).** While download and upload run, the client keeps probing
 the ping endpoint. `loadedLatency` reports the RTT stats per direction plus `bufferbloatMs` —
