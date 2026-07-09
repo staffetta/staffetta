@@ -9,6 +9,7 @@ import {
   computeStdDev,
   computeThroughputSamplesMbps,
   computeThroughputStats,
+  resolveWarmupWindowsCount,
   roundTo,
   spreadTransferChunks,
 } from '../src/index.ts'
@@ -89,7 +90,7 @@ describe('computeLoadedLatency', () => {
 })
 
 describe('spreadTransferChunks', () => {
-  it('spreads the bytes uniformly over the transfer duration', () => {
+  it('cuts the bytes on the sampling grid, one piece per covered window', () => {
     const chunks = spreadTransferChunks({bytes: 300, endMs: 1000, elapsedMs: 300, intervalMs: 100})
 
     assert.equal(chunks.length, 3)
@@ -97,9 +98,36 @@ describe('spreadTransferChunks', () => {
       chunks.map(it => it.bytes),
       [100, 100, 100],
     )
+    // Timestamped at each overlap midpoint, safely inside the window.
     assert.deepEqual(
       chunks.map(it => it.atMs),
-      [800, 900, 1000],
+      [750, 850, 950],
+    )
+  })
+
+  it('sizes edge pieces proportionally to their window overlap', () => {
+    const chunks = spreadTransferChunks({bytes: 250, endMs: 625, elapsedMs: 250, intervalMs: 100})
+
+    assert.deepEqual(
+      chunks.map(it => it.bytes),
+      [25, 100, 100, 25],
+    )
+    assert.deepEqual(
+      chunks.map(it => it.atMs),
+      [387.5, 450, 550, 612.5],
+    )
+  })
+
+  it('honors a non-zero grid origin', () => {
+    const chunks = spreadTransferChunks({bytes: 200, endMs: 250, elapsedMs: 200, intervalMs: 100, gridOriginMs: 50})
+
+    assert.deepEqual(
+      chunks.map(it => it.bytes),
+      [100, 100],
+    )
+    assert.deepEqual(
+      chunks.map(it => it.atMs),
+      [100, 200],
     )
   })
 
@@ -137,6 +165,35 @@ describe('computeThroughputStats', () => {
     const noisy = computeThroughputStats([10, 10, 10, 30])
 
     assert.ok(noisy.stabilityCv > 0)
+  })
+})
+
+describe('resolveWarmupWindowsCount', () => {
+  it('extends the warm-up until the throughput reaches 75% of the steady median', () => {
+    // Ramp: 10, 20, 40, then steady around 100. Steady median (second half) = 100;
+    // the first window ≥ 75 is index 3.
+    const samples = [10, 20, 40, 100, 100, 100, 100, 100]
+
+    assert.equal(resolveWarmupWindowsCount(samples, 1), 3)
+  })
+
+  it('never trims below the configured floor', () => {
+    // Already at steady state from window 0, but the floor still applies.
+    assert.equal(resolveWarmupWindowsCount([100, 100, 100, 100, 100, 100], 2), 2)
+  })
+
+  it('never trims more than half the windows', () => {
+    // Ramping until the very end: the cap keeps half the phase measured.
+    assert.equal(resolveWarmupWindowsCount([1, 2, 3, 4, 5, 6, 7, 100], 1), 4)
+  })
+
+  it('falls back to the floor when there is no steady throughput', () => {
+    assert.equal(resolveWarmupWindowsCount([0, 0, 0, 0, 0, 0], 1), 1)
+    assert.equal(resolveWarmupWindowsCount([], 4), 0)
+  })
+
+  it('clamps the floor to half the windows on short phases', () => {
+    assert.equal(resolveWarmupWindowsCount([50, 50, 50], 4), 1)
   })
 })
 

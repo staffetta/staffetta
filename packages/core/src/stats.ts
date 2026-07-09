@@ -75,14 +75,18 @@ export function computeLoadedLatency(
 
 /**
  * Spreads one completed transfer (e.g. an upload POST, whose bytes are only observable at
- * completion) uniformly over its duration as sampling-window-sized chunks, so the fixed-window
- * throughput sampling sees a flow instead of a single spike at the completion timestamp.
+ * completion) uniformly over its duration, so the fixed-window throughput sampling sees a
+ * flow instead of a single spike at the completion timestamp. The pieces are cut on the
+ * sampling grid (`gridOriginMs` is the same origin the windowing uses) with bytes
+ * proportional to the overlap with each window: evenly spaced point pieces would beat
+ * against the window width and alias into spurious spikes and dips.
  */
 export function spreadTransferChunks(args: {
   bytes: number
   endMs: number
   elapsedMs: number
   intervalMs: number
+  gridOriginMs?: undefined | number
 }): Array<SpeedtestTransferChunk> {
   const {bytes, endMs, elapsedMs, intervalMs} = args
 
@@ -90,14 +94,28 @@ export function spreadTransferChunks(args: {
     return [{bytes, atMs: endMs}]
   }
 
-  const piecesCount = Math.max(1, Math.ceil(elapsedMs / intervalMs))
-  const pieceBytes = bytes / piecesCount
+  const gridOriginMs = args.gridOriginMs ?? 0
   const startMs = endMs - elapsedMs
+  const firstWindowIdx = Math.floor((startMs - gridOriginMs) / intervalMs)
+  const lastWindowIdx = Math.floor((endMs - gridOriginMs) / intervalMs)
+  const chunks: Array<SpeedtestTransferChunk> = []
 
-  return Array.from({length: piecesCount}, (_, idx) => ({
-    bytes: pieceBytes,
-    atMs: startMs + ((idx + 1) / piecesCount) * elapsedMs,
-  }))
+  for (let idx = firstWindowIdx; idx <= lastWindowIdx; ++idx) {
+    const windowStartMs = gridOriginMs + idx * intervalMs
+    const overlapStartMs = Math.max(startMs, windowStartMs)
+    const overlapEndMs = Math.min(endMs, windowStartMs + intervalMs)
+
+    if (overlapEndMs > overlapStartMs) {
+      // Timestamped at the overlap midpoint: a piece sitting exactly on a window boundary
+      // would land in either neighbor depending on floating-point rounding.
+      chunks.push({
+        bytes: bytes * ((overlapEndMs - overlapStartMs) / elapsedMs),
+        atMs: (overlapStartMs + overlapEndMs) / 2,
+      })
+    }
+  }
+
+  return chunks
 }
 
 /**
@@ -130,6 +148,34 @@ export function computeThroughputSamplesMbps(
     const windowMs = idx === windowsCount - 1 ? totalMs - idx * intervalMs : intervalMs
     return bytesToMbps(bytes, windowMs)
   })
+}
+
+/**
+ * Adaptive warm-up: how many leading windows to exclude from the statistics. TCP slow start
+ * and the size ramp need a rate-dependent time to reach steady state, so a fixed cutoff
+ * under-trims fast high-BDP links (still ramping) and over-trims slow ones. The steady rate
+ * is estimated as the median of the second half of the windows; the warm-up ends at the first
+ * window reaching 75% of it. Clamped between `minWindows` (the configured floor) and half the
+ * windows, so at least half the phase is always measured and a genuinely unstable link cannot
+ * be trimmed into looking stable.
+ */
+export function resolveWarmupWindowsCount(samplesMbps: Array<number>, minWindows: number): number {
+  const maxWindows = Math.floor(samplesMbps.length / 2)
+  const floorWindows = Math.min(Math.max(0, minWindows), maxWindows)
+
+  const steadyMbps = computePercentile(samplesMbps.slice(Math.floor(samplesMbps.length / 2)), 50)
+
+  if (steadyMbps <= 0) {
+    return floorWindows
+  }
+
+  const rampEndIdx = samplesMbps.findIndex(mbps => mbps >= steadyMbps * 0.75)
+
+  if (rampEndIdx < 0) {
+    return floorWindows
+  }
+
+  return Math.min(maxWindows, Math.max(floorWindows, rampEndIdx))
 }
 
 export function bytesToMbps(bytes: number, elapsedMs: number): number {

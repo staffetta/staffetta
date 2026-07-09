@@ -12,8 +12,10 @@ export interface SpeedtestConfig {
    */
   transferDurationMs: number
   /**
-   * Initial portion of each transfer phase excluded from the statistics: it covers TCP slow
-   * start and the size ramp, which would otherwise deflate min and inflate the stability CV.
+   * Minimum initial portion of each transfer phase excluded from the statistics. The effective
+   * warm-up extends adaptively until the windowed throughput reaches steady state (TCP slow
+   * start and the size ramp would otherwise deflate min and inflate the stability CV), capped
+   * at half the phase so at least half of it is always measured.
    */
   warmupMs: number
   /** Size of the first request of the adaptive ramp. */

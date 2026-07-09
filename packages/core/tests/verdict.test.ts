@@ -42,6 +42,24 @@ describe('computeVerdict', () => {
     )
   })
 
+  it('reports unstable on a far-away link even when throughput is steady', () => {
+    // 100 Mbps rock-solid through 300+ ms of RTT (satellite-like): fast for bulk transfers,
+    // unusable for calls, gaming, or interactive sessions.
+    assert.equal(
+      computeVerdict({
+        latency: latency({avgMs: 315, minMs: 308, maxMs: 322, p50Ms: 316, p90Ms: 319, jitterMs: 3.5}),
+        download: throughput({stabilityCv: 0.01}),
+        upload: throughput({stabilityCv: 0.03}),
+        loadedLatency: loadedLatency(0),
+      }),
+      'unstable',
+    )
+  })
+
+  it('caps the verdict at good on a moderately high idle latency', () => {
+    assert.equal(computeVerdict({latency: latency({p50Ms: 120}), download: throughput(), upload: throughput()}), 'good')
+  })
+
   it('reports unstable on heavy bufferbloat', () => {
     assert.equal(
       computeVerdict({
@@ -93,9 +111,11 @@ describe('computeVerdict', () => {
         {
           minDownloadMbps: 200,
           minUploadMbps: 1,
+          optimalMaxLatencyMs: 80,
           optimalMaxJitterMs: 10,
           optimalMaxCv: 0.15,
           optimalMaxBufferbloatMs: 30,
+          unstableMinLatencyMs: 250,
           unstableMinJitterMs: 30,
           unstableMinCv: 0.3,
           unstableMinBufferbloatMs: 100,

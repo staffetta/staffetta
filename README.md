@@ -112,7 +112,7 @@ Tune the run with `config` and the verdict with `thresholds`; defaults live in `
 config: {
   pingCount: 16,                          // measured pings (plus a discarded warm-up)
   transferDurationMs: 8000,               // target duration of each transfer phase
-  warmupMs: 1000,                         // initial slice excluded from the stats (slow start + ramp)
+  warmupMs: 1000,                         // minimum warm-up excluded from the stats (it extends adaptively until steady state)
   initialRequestSizeBytes: 262_144,       // first request of the adaptive size ramp (256 KiB)
   maxRequestSizeBytes: 67_108_864,        // ramp cap (64 MiB) — keep it under the server's maxSizeBytes
   connections: 3,                         // parallel streams per transfer phase
@@ -134,6 +134,11 @@ the ping endpoint. `loadedLatency` reports the RTT stats per direction plus `buf
 the worst-direction median loaded RTT minus the idle median. A connection can be fast and still
 unusable for calls or gaming when its buffers bloat under load; the verdict accounts for it
 (`optimalMaxBufferbloatMs`, `unstableMinBufferbloatMs` in the thresholds).
+
+The verdict also judges the absolute idle latency, not just its stability: a link with a rock
+solid 300 ms median RTT moves bulk data at full speed and is still unusable interactively, so
+it reports `unstable` above `unstableMinLatencyMs` (250 ms by default) and never better than
+`good` above `optimalMaxLatencyMs` (80 ms by default).
 
 ## React
 
@@ -167,22 +172,31 @@ carry `cache-control: no-store`.
 | `GET {base}/download?size=N` | Stream exactly `N` bytes of **incompressible** data as `application/octet-stream` with an explicit `content-length`. Incompressible, or transparent compression on the path inflates the measurement. Reply `400` for a non-integer, non-positive or over-limit `size`. |
 | `POST {base}/upload` | Count and discard the raw `application/octet-stream` body, reply `{"bytesReceived": n, "serverElapsedMs": n}` and `413` over the limit. |
 
-`serverElapsedMs` is the server-side first-to-last-byte receive time. The client prefers it as
-the upload time base because it excludes the response round trip; servers that cannot measure
-it reply `0` and the client falls back to its own clock.
+`serverElapsedMs` is the server-side first-to-last-byte receive time. The client uses it as
+the upload time base of the windowed statistics because it excludes the request and response
+round trips; servers that cannot measure it reply `0` and the client falls back to its own
+clock.
 
 **Why chunked uploads?** Upload progress is not observable with `fetch()` (request-body
-streaming needs HTTP/2 plus `duplex: 'half'`), so each upload stream sends sequential POSTs on
-its keep-alive connection, ramping the chunk size like the download does. Completed chunks are
-spread over their duration for the windowed stats, and the ramp is capped to the remaining time
-so the last chunk does not run long past the phase deadline.
+streaming needs HTTP/2 plus `duplex: 'half'`), so each upload stream sends POSTs sized to
+carry the observed rate through the remaining phase time, and pipelines them at depth 2: the
+next POST is dispatched about one idle RTT before the current one finishes sending, so the
+reply round trip overlaps the next send instead of idling the link. Completed chunks are
+spread over their transfer time for the windowed stats — the server-measured receive time,
+bounded by the client's own clock minus one round trip, so a server draining its buffers in
+bursts cannot collapse the sample. Uploaded bytes are
+incompressible random data — like the download side, so transparent compression on the path
+cannot inflate the measurement.
 
 **How the client drives the endpoints.** The protocol stays three plain endpoints; the
-methodology lives client-side: `connections` parallel streams request back to back for
-`transferDurationMs`, each request sized to last ~1 s at the observed rate (in-flight downloads
-are aborted at the deadline; the received bytes still count). The first `warmupMs` are excluded
-from the statistics, and the ping endpoint doubles as the under-load latency probe — another
-reason it stays anonymous and instant.
+methodology lives client-side: `connections` parallel streams transfer for
+`transferDurationMs`, each request sized to span the remaining phase time at the observed
+rate. Download streams prefetch the next request one idle RTT before the current body drains
+(and in-flight downloads are aborted at the deadline; the received bytes still count), so the
+per-request round trip never shows up as a throughput gap. The warm-up excluded from the
+statistics starts at `warmupMs` and extends adaptively until the throughput reaches steady
+state (capped at half the phase), covering TCP slow start on high-BDP links. The ping endpoint
+doubles as the under-load latency probe — another reason it stays anonymous and instant.
 
 ## Development
 

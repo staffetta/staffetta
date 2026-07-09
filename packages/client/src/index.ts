@@ -6,6 +6,7 @@ import {
   computeThroughputStats,
   computeVerdict,
   decodeUploadReply,
+  resolveWarmupWindowsCount,
   roundTo,
   type SpeedtestConfig,
   SpeedtestDefaultConfig,
@@ -24,8 +25,22 @@ import {
   spreadTransferChunks,
 } from '@staffetta/core'
 
-/** Size each ramped request so it lasts roughly this long at the currently observed rate. */
-const TargetRequestDurationMs = 1000
+/**
+ * Overlap lead used to hide the per-request round trip: the next download request is
+ * prefetched (and the next upload POST dispatched) about one idle RTT before the current one
+ * ends, so the link never sits idle between requests. Clamped to keep a degenerate ping
+ * measurement from scheduling the overlap nonsensically.
+ */
+const MinOverlapLeadMs = 10
+const MaxOverlapLeadMs = 500
+
+/**
+ * Download requests are sized to outlast the remaining phase time by this factor: the deadline
+ * abort trims them (the received bytes still count), which is cheaper than a finish-and-refetch
+ * boundary near the deadline. Upload POSTs use no overshoot — they cannot be aborted without
+ * losing their bytes, so they aim to complete right at the deadline.
+ */
+const DownloadSizeOvershootFactor = 1.25
 
 export interface SpeedtestClientOptions {
   /** Base URL of the server under test, e.g. `https://api.example.com`. */
@@ -101,11 +116,14 @@ export async function runSpeedtest(options: SpeedtestClientOptions): Promise<Spe
     options.onPhase?.('ping')
     latency = await runPingPhase(context)
 
+    // The idle median RTT paces the request overlap of both transfer phases.
+    const overlapLeadMs = Math.min(MaxOverlapLeadMs, Math.max(MinOverlapLeadMs, latency.p50Ms))
+
     options.onPhase?.('download')
-    download = await runDownloadPhase(context)
+    download = await runDownloadPhase(context, overlapLeadMs)
 
     options.onPhase?.('upload')
-    upload = await runUploadPhase(context)
+    upload = await runUploadPhase(context, overlapLeadMs)
   } catch (error) {
     if (error instanceof SpeedtestPhaseTimeout) {
       throw new SpeedtestTimeoutError(assemblePartialResult(context, error, {latency, download}))
@@ -160,11 +178,14 @@ async function runPingPhase(context: SpeedtestContext): Promise<SpeedtestLatency
 
 /**
  * Saturates the link for `transferDurationMs` with `connections` parallel streams. Each stream
- * requests back to back, ramping the request size to the observed rate (~1 s per request), and
- * the in-flight requests are aborted when the deadline fires — the bytes received so far are
- * already accounted. Concurrent latency probes measure the RTT under load.
+ * sizes its request to carry the observed rate through the remaining phase time and prefetches
+ * the next request one idle RTT before the current body drains, so the per-request round trip
+ * never leaves the link idle (a gap would undercount the throughput and fabricate zero-rate
+ * windows that inflate the stability CV). In-flight requests are aborted when the deadline
+ * fires — the bytes received so far are already accounted. Concurrent latency probes measure
+ * the RTT under load.
  */
-async function runDownloadPhase(context: SpeedtestContext): Promise<TransferPhaseOutcome> {
+async function runDownloadPhase(context: SpeedtestContext, overlapLeadMs: number): Promise<TransferPhaseOutcome> {
   const {config} = context
   const phase = createPhaseSignal(context)
   // Separate deadline controller: hitting the deadline is the normal end of the phase, not an error.
@@ -179,16 +200,26 @@ async function runDownloadPhase(context: SpeedtestContext): Promise<TransferPhas
   const chunks: Array<SpeedtestTransferChunk> = []
   const progress = createProgressWindow(context, 'download', startMs)
 
-  const runStream = async () => {
-    let requestSizeBytes = config.initialRequestSizeBytes
-    let streamBytes = 0
-    const streamStartMs = performance.now()
+  const issueRequest = (sizeBytes: number): PrefetchedDownload => {
+    const response = request(context, 'GET', `${context.paths.download}?size=${sizeBytes}`, {signal: requestSignal})
+    response.catch(() => {}) // May reject (deadline abort) before it is awaited; the await still sees the rejection.
+    return {sizeBytes, response}
+  }
 
-    while (performance.now() < deadlineMs) {
+  /** Releases a prefetched request that will never be drained (deadline abort or stream error). */
+  const discardRequest = (prefetched: undefined | PrefetchedDownload) => {
+    prefetched?.response.then(response => response.body?.cancel()).catch(() => {})
+  }
+
+  const runStream = async () => {
+    let prefetched: undefined | PrefetchedDownload = issueRequest(config.initialRequestSizeBytes)
+
+    while (prefetched) {
+      const current = prefetched
+      prefetched = undefined
+
       try {
-        const response = await request(context, 'GET', `${context.paths.download}?size=${requestSizeBytes}`, {
-          signal: requestSignal,
-        })
+        const response = await current.response
         assertResponseOk(response, 'download')
 
         const reader = response.body?.getReader()
@@ -197,6 +228,11 @@ async function runDownloadPhase(context: SpeedtestContext): Promise<TransferPhas
           throw new Error('speedtest download: missing response body stream')
         }
 
+        // Rate baseline from the first body byte, not the request dispatch: the connection
+        // round trip would dilute the estimate that sizes and schedules the next request.
+        const bodyStartMs = performance.now()
+        let requestBytes = 0
+
         while (true) {
           const {done, value} = await reader.read() // Rejects on abort, releasing the stream.
           if (done) {
@@ -204,23 +240,46 @@ async function runDownloadPhase(context: SpeedtestContext): Promise<TransferPhas
           }
 
           const nowMs = performance.now()
-          streamBytes += value.byteLength
+          requestBytes += value.byteLength
           chunks.push({bytes: value.byteLength, atMs: nowMs})
           progress.add(value.byteLength, nowMs)
+
+          if (!prefetched && nowMs < deadlineMs) {
+            const rateBytesPerMs = requestBytes / Math.max(1, nowMs - bodyStartMs)
+
+            if (current.sizeBytes - requestBytes <= rateBytesPerMs * overlapLeadMs) {
+              prefetched = issueRequest(
+                nextRequestSizeBytes({
+                  rateBytesPerMs,
+                  remainingMs: deadlineMs - nowMs,
+                  overshootFactor: DownloadSizeOvershootFactor,
+                  config,
+                }),
+              )
+            }
+          }
+        }
+
+        if (!prefetched && performance.now() < deadlineMs) {
+          // Body ended before the prefetch armed (e.g. a shorter-than-requested response):
+          // keep the stream going instead of ending the phase early.
+          const rateBytesPerMs = requestBytes / Math.max(1, performance.now() - bodyStartMs)
+          prefetched = issueRequest(
+            nextRequestSizeBytes({
+              rateBytesPerMs,
+              remainingMs: deadlineMs - performance.now(),
+              overshootFactor: DownloadSizeOvershootFactor,
+              config,
+            }),
+          )
         }
       } catch (error) {
+        discardRequest(prefetched)
         if (deadlineController.signal.aborted && !phase.signal.aborted) {
-          break // Deadline hit mid-transfer: normal completion, the received bytes are counted.
+          return // Deadline hit mid-transfer: normal completion, the received bytes are counted.
         }
         throw error
       }
-
-      requestSizeBytes = nextRequestSizeBytes({
-        transferredBytes: streamBytes,
-        elapsedMs: performance.now() - streamStartMs,
-        remainingMs: deadlineMs - performance.now(),
-        config,
-      })
     }
   }
 
@@ -249,16 +308,24 @@ async function runDownloadPhase(context: SpeedtestContext): Promise<TransferPhas
 
 /**
  * Upload progress with fetch() is not observable (request-body streaming needs HTTP/2 plus
- * `duplex: 'half'`), so each stream sends sequential POST chunks on its keep-alive connection,
- * ramping the chunk size like the download does. A stream stops starting new chunks once the
- * deadline passes (in-flight chunks complete: aborting them would lose their bytes), and the
- * size ramp is capped to the remaining time so the tail stays short. Each completed POST is
- * spread over its duration for the windowed stats; its displayed throughput prefers the
- * server-measured receive time (`serverElapsedMs`), which excludes the response round trip.
+ * `duplex: 'half'`), so each stream sends POST chunks sized to carry the observed rate through
+ * the remaining phase time. The POSTs are pipelined at depth 2: the next one is dispatched one
+ * idle RTT before the current one is predicted to finish sending, so the reply round trip
+ * overlaps the next send instead of idling the link. A stream stops dispatching once the
+ * deadline passes (in-flight chunks complete: aborting them would lose their bytes). Each
+ * completed POST is spread over the server-measured receive time (`serverElapsedMs`, which
+ * excludes the request and response trips) anchored half an RTT before the reply landed, so
+ * the windowed stats see the transfer where and as long as the server actually saw it.
  */
-async function runUploadPhase(context: SpeedtestContext): Promise<TransferPhaseOutcome> {
+async function runUploadPhase(context: SpeedtestContext, overlapLeadMs: number): Promise<TransferPhaseOutcome> {
   const {config} = context
   const phase = createPhaseSignal(context)
+
+  // Incompressible pool sliced per POST, filled before the phase clock starts: zeros (or any
+  // pattern) would let transparent compression along the path inflate the measured upload —
+  // the same reason the server streams random bytes on the download side.
+  const payloadPool = createIncompressiblePayload(config.maxRequestSizeBytes)
+
   const sampler = startLoadedPingSampler(context, 'upload', phase.signal)
 
   const startMs = performance.now()
@@ -266,39 +333,81 @@ async function runUploadPhase(context: SpeedtestContext): Promise<TransferPhaseO
 
   const chunks: Array<SpeedtestTransferChunk> = []
   const progress = createProgressWindow(context, 'upload', startMs)
-  // One zero-filled pool sliced per POST: allocating (and zeroing) payloads inside the timed
-  // loop would starve the throughput windows. Random data would only waste CPU anyway — the
-  // server discards the bytes.
-  const payloadPool = new Blob([new Uint8Array(config.maxRequestSizeBytes)], {type: 'application/octet-stream'})
+  // Where the accounted transfer really ends (the last spread's edge, not its last piece).
+  let spreadEndMaxMs = startMs
+
+  const postChunk = (sizeBytes: number): PostedUpload => {
+    const reply = requestUpload(context, payloadPool.slice(0, sizeBytes, 'application/octet-stream'), phase.signal)
+    reply.catch(() => {}) // May reject (phase abort) before it is settled; settlePost still sees the rejection.
+    return {sentAtMs: performance.now(), sizeBytes, reply}
+  }
+
+  /** Awaits the reply, accounts the transfer, and returns the observed rate in bytes/ms. */
+  const settlePost = async (posted: PostedUpload): Promise<number> => {
+    const reply = await posted.reply
+    const nowMs = performance.now()
+    const clientElapsedMs = nowMs - posted.sentAtMs
+    // How long the POST occupied the link: the server-measured receive time, bounded on both
+    // sides by the client clock — a server cannot have received longer than the whole round
+    // trip, and one that drains its buffers in bursts can report a fraction of the real
+    // transfer time (never less than the client-observed elapsed minus one round trip).
+    const receiveElapsedMs = Math.max(
+      1,
+      Math.min(reply.serverElapsedMs, clientElapsedMs),
+      clientElapsedMs - overlapLeadMs,
+    )
+    // The last byte reached the server about half a round trip before the reply landed here.
+    const receiveEndMs = Math.max(posted.sentAtMs + receiveElapsedMs, nowMs - overlapLeadMs / 2)
+    spreadEndMaxMs = Math.max(spreadEndMaxMs, receiveEndMs)
+
+    chunks.push(
+      ...spreadTransferChunks({
+        bytes: reply.bytesReceived,
+        endMs: receiveEndMs,
+        elapsedMs: receiveElapsedMs,
+        intervalMs: config.sampleIntervalMs,
+        gridOriginMs: startMs,
+      }),
+    )
+    progress.add(reply.bytesReceived, nowMs, bytesToMbps(reply.bytesReceived, receiveElapsedMs))
+
+    return reply.bytesReceived / Math.max(1, receiveElapsedMs)
+  }
 
   const runStream = async () => {
-    let chunkSizeBytes = config.initialRequestSizeBytes
+    // The first POST runs alone: its reply seeds the rate estimate that paces the pipeline.
+    let rateBytesPerMs = await settlePost(postChunk(config.initialRequestSizeBytes))
+    let previous: undefined | PostedUpload
 
-    while (performance.now() < deadlineMs) {
-      const payload = payloadPool.slice(0, chunkSizeBytes, 'application/octet-stream')
-
-      const sentAt = performance.now()
-      const reply = await requestUpload(context, payload, phase.signal)
-      const nowMs = performance.now()
-      const clientElapsedMs = nowMs - sentAt
-      const elapsedMs = reply.serverElapsedMs > 0 ? reply.serverElapsedMs : clientElapsedMs
-
-      chunks.push(
-        ...spreadTransferChunks({
-          bytes: reply.bytesReceived,
-          endMs: nowMs,
-          elapsedMs: clientElapsedMs,
-          intervalMs: config.sampleIntervalMs,
+    // Stop dispatching one lead short of the deadline: the in-flight POST is already sized
+    // to reach it, and an extra POST would only overlap the tail and run past the phase.
+    while (performance.now() < deadlineMs - overlapLeadMs) {
+      const posted = postChunk(
+        nextRequestSizeBytes({
+          rateBytesPerMs,
+          remainingMs: deadlineMs - performance.now(),
+          overshootFactor: 1,
+          config,
         }),
       )
-      progress.add(reply.bytesReceived, nowMs, bytesToMbps(reply.bytesReceived, elapsedMs))
 
-      chunkSizeBytes = nextRequestSizeBytes({
-        transferredBytes: reply.bytesReceived,
-        elapsedMs: clientElapsedMs,
-        remainingMs: deadlineMs - performance.now(),
-        config,
-      })
+      if (previous) {
+        // Settling the previous reply overlaps `posted`'s send — and backpressures the
+        // pipeline to depth 2 when the send-time prediction below runs short.
+        rateBytesPerMs = await settlePost(previous)
+      }
+      previous = posted
+
+      // Sleep until `posted` is predicted to be one lead short of fully sent, so the next
+      // iteration dispatches while this POST's tail and reply are still in flight. Capped to
+      // the deadline: past it the loop exits anyway (and a degenerate rate must not oversleep).
+      const predictedSendEndMs = posted.sentAtMs + posted.sizeBytes / Math.max(rateBytesPerMs, 1e-6)
+      const pacingMs = Math.min(deadlineMs, predictedSendEndMs - overlapLeadMs) - performance.now()
+      await sleep(Math.max(0, pacingMs), phase.signal)
+    }
+
+    if (previous) {
+      await settlePost(previous)
     }
   }
 
@@ -314,7 +423,9 @@ async function runUploadPhase(context: SpeedtestContext): Promise<TransferPhaseO
     throw error
   }
 
-  const endMs = performance.now()
+  // The measured transfer ends where the last spread ends: what follows is only the final
+  // reply's round trip, and counting it would dilute the tail window and the average.
+  const endMs = spreadEndMaxMs > startMs ? spreadEndMaxMs : performance.now()
   const loadedRttSamplesMs = await sampler.stop()
 
   return {
@@ -371,54 +482,67 @@ function assemblePartialResult(
 }
 
 /**
- * Windowed stats over the received chunks, skipping the configured warm-up (TCP slow start and
- * the size ramp would deflate min and inflate the CV). Phases shorter than the warm-up fall
- * back to the full range. The average is the whole-transfer rate over the measured range.
+ * Windowed stats over the received chunks. The warm-up excluded from the head is adaptive
+ * (see {@link resolveWarmupWindowsCount}): the configured `warmupMs` is the floor, and it
+ * extends until the throughput reaches steady state, so TCP slow start and the size ramp on
+ * high-BDP links do not deflate the average or inflate the CV. The average is the
+ * whole-transfer rate over the measured range.
  */
 function computeTransferStats(
   chunks: Array<SpeedtestTransferChunk>,
   args: {startMs: number; endMs: number; config: SpeedtestConfig},
 ): SpeedtestThroughputStats {
   const {startMs, endMs, config} = args
-  const warmupEndMs = startMs + config.warmupMs
-  const statsStartMs = warmupEndMs < endMs ? warmupEndMs : startMs
 
-  const measuredChunks = chunks.filter(chunk => chunk.atMs >= statsStartMs)
-  const measuredBytes = measuredChunks.reduce((sum, chunk) => sum + chunk.bytes, 0)
-  const samplesMbps = computeThroughputSamplesMbps(measuredChunks, {
-    startMs: statsStartMs,
+  const allSamplesMbps = computeThroughputSamplesMbps(chunks, {
+    startMs,
     endMs,
     intervalMs: config.sampleIntervalMs,
   })
+  const warmupWindows = resolveWarmupWindowsCount(allSamplesMbps, Math.ceil(config.warmupMs / config.sampleIntervalMs))
+  const statsStartMs = startMs + warmupWindows * config.sampleIntervalMs
 
-  return computeThroughputStats(samplesMbps, bytesToMbps(measuredBytes, endMs - statsStartMs))
+  const measuredBytes = chunks.reduce((sum, chunk) => (chunk.atMs >= statsStartMs ? sum + chunk.bytes : sum), 0)
+
+  return computeThroughputStats(allSamplesMbps.slice(warmupWindows), bytesToMbps(measuredBytes, endMs - statsStartMs))
 }
 
 /**
- * Next size of the adaptive ramp: aim at {@link TargetRequestDurationMs} at the observed rate,
- * capped to what the remaining time can carry (so the last request does not run long past the
- * deadline) and clamped to the configured bounds.
+ * Next size of the adaptive ramp: enough bytes to carry the observed rate through the
+ * remaining phase time (scaled by the caller's overshoot policy), clamped to the configured
+ * bounds. Fewer, longer requests mean fewer request boundaries for the overlap to hide.
  */
 function nextRequestSizeBytes(args: {
-  transferredBytes: number
-  elapsedMs: number
+  rateBytesPerMs: number
   remainingMs: number
+  overshootFactor: number
   config: SpeedtestConfig
 }): number {
-  const {transferredBytes, elapsedMs, remainingMs, config} = args
-  const rateBytesPerMs = elapsedMs > 0 ? transferredBytes / elapsedMs : 0
+  const {rateBytesPerMs, remainingMs, overshootFactor, config} = args
 
-  if (rateBytesPerMs <= 0) {
+  if (rateBytesPerMs <= 0 || remainingMs <= 0) {
     return config.initialRequestSizeBytes
   }
 
-  const targetBytes = rateBytesPerMs * TargetRequestDurationMs
-  const remainingCapBytes = remainingMs > 0 ? rateBytesPerMs * remainingMs : targetBytes
+  const targetBytes = rateBytesPerMs * remainingMs * overshootFactor
 
-  return Math.max(
-    config.initialRequestSizeBytes,
-    Math.min(config.maxRequestSizeBytes, Math.floor(Math.min(targetBytes, remainingCapBytes))),
-  )
+  return Math.max(config.initialRequestSizeBytes, Math.min(config.maxRequestSizeBytes, Math.floor(targetBytes)))
+}
+
+/**
+ * One `crypto.getRandomValues`-filled pool sliced per POST: allocating payloads inside the
+ * timed loop would starve the throughput windows, and compressible content would let
+ * transparent compression along the path inflate the measurement. The RNG caps at 64 KiB per
+ * call, hence the segmented fill.
+ */
+function createIncompressiblePayload(sizeBytes: number): Blob {
+  const bytes = new Uint8Array(sizeBytes)
+
+  for (let offset = 0; offset < sizeBytes; offset += 65_536) {
+    crypto.getRandomValues(bytes.subarray(offset, Math.min(sizeBytes, offset + 65_536)))
+  }
+
+  return new Blob([bytes], {type: 'application/octet-stream'})
 }
 
 /**
@@ -575,4 +699,17 @@ interface SpeedtestContext {
 interface TransferPhaseOutcome {
   throughput: SpeedtestThroughputStats
   loadedRttSamplesMs: Array<number>
+}
+
+/** A download request dispatched ahead of time, drained when the current one ends. */
+interface PrefetchedDownload {
+  sizeBytes: number
+  response: Promise<Response>
+}
+
+/** An upload POST in flight: dispatched, possibly still sending, its reply not yet awaited. */
+interface PostedUpload {
+  sentAtMs: number
+  sizeBytes: number
+  reply: Promise<SpeedtestUploadReply>
 }
