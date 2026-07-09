@@ -1,0 +1,49 @@
+{
+  "name": "@staffetta/react",
+  "version": "0.1.0",
+  "description": "React bindings for the staffetta speedtest client: a useSpeedtest hook with status, live log, start and cancel.",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc --project tsconfig.json"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@staffetta/client": "workspace:^",
+    "@staffetta/core": "workspace:^"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "react": "^19.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/staffetta/staffetta.git",
+    "directory": "packages/react"
+  },
+  "keywords": [
+    "speedtest",
+    "react",
+    "hook",
+    "bandwidth"
+  ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "restricted"
+  }
+}

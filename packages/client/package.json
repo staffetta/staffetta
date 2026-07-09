@@ -1,0 +1,47 @@
+{
+  "name": "@staffetta/client",
+  "version": "0.1.0",
+  "description": "Client engine of the staffetta speedtest: runs the ping → download → upload relay against any server implementing the protocol. Framework-free, fetch-based.",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc --project tsconfig.json",
+    "test": "node --test --enable-source-maps './tests/**/*.test.ts'"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@staffetta/core": "workspace:^"
+  },
+  "devDependencies": {
+    "@staffetta/server": "workspace:^",
+    "@types/node": "^24.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/staffetta/staffetta.git",
+    "directory": "packages/client"
+  },
+  "keywords": [
+    "speedtest",
+    "bandwidth",
+    "latency",
+    "jitter",
+    "browser"
+  ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "restricted"
+  }
+}

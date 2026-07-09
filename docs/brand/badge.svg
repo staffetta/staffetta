@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-label="staffetta — badge: il cambio in negativo su tessera arancione">
+  <rect width="120" height="120" rx="27" fill="#E8541F"/>
+  <g transform="rotate(-38 60 60)">
+    <rect x="16" y="51" width="44" height="18" rx="9" fill="#FFFFFF" opacity="0.45"/>
+    <rect x="52" y="51" width="52" height="18" rx="9" fill="#FFFFFF"/>
+  </g>
+</svg>

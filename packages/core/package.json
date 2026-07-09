@@ -1,0 +1,40 @@
+{
+  "name": "@staffetta/core",
+  "version": "0.1.0",
+  "description": "Protocol types, wire contract and measurement math shared by the staffetta speedtest client and server.",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc --project tsconfig.json",
+    "test": "node --test --enable-source-maps './tests/**/*.test.ts'"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/staffetta/staffetta.git",
+    "directory": "packages/core"
+  },
+  "keywords": [
+    "speedtest",
+    "bandwidth",
+    "latency",
+    "network",
+    "throughput"
+  ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "restricted"
+  }
+}

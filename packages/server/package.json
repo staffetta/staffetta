@@ -1,0 +1,50 @@
+{
+  "name": "@staffetta/server",
+  "version": "0.1.0",
+  "description": "Server side of the staffetta speedtest: stream primitives, a Web-standard fetch handler and a Node http adapter. Framework-agnostic.",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "default": "./dist/node.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc --project tsconfig.json",
+    "test": "node --test --enable-source-maps './tests/**/*.test.ts'"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@staffetta/core": "workspace:^"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/staffetta/staffetta.git",
+    "directory": "packages/server"
+  },
+  "keywords": [
+    "speedtest",
+    "bandwidth",
+    "server",
+    "fetch-handler",
+    "node"
+  ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "restricted"
+  }
+}

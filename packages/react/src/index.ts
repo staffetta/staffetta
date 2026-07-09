@@ -1,0 +1,88 @@
+import {runSpeedtest, type SpeedtestClientOptions} from '@staffetta/client'
+import type {SpeedtestPhase, SpeedtestProgressSample, SpeedtestResult} from '@staffetta/core'
+import {useCallback, useEffect, useRef, useState} from 'react'
+
+export type UseSpeedtestOptions = Omit<SpeedtestClientOptions, 'signal' | 'onPhase' | 'onSample'>
+
+/**
+ * Drives one speedtest at a time: `start()` is a no-op while a test is running, `cancel()`
+ * aborts it (also on unmount) returning to the idle state. `options` is read when `start()`
+ * is called, so an inline object literal is fine.
+ */
+export function useSpeedtest(options: UseSpeedtestOptions): UseSpeedtestContract {
+  const [status, setStatus] = useState<SpeedtestStatus>({kind: 'idle'})
+  const [log, setLog] = useState<Array<SpeedtestLogEntry>>([])
+  const optionsRef = useRef(options)
+  optionsRef.current = options
+  const abortControllerRef = useRef<undefined | AbortController>(undefined)
+
+  // Aborts a test left running on unmount.
+  useEffect(() => () => abortControllerRef.current?.abort(), [])
+
+  const start = useCallback(() => {
+    if (abortControllerRef.current && !abortControllerRef.current.signal.aborted) {
+      return
+    }
+
+    const abortController = new AbortController()
+    abortControllerRef.current = abortController
+    setStatus({kind: 'running', phase: 'ping'})
+    setLog([])
+
+    runSpeedtest({
+      ...optionsRef.current,
+      signal: abortController.signal,
+      onPhase: phase => {
+        setStatus({kind: 'running', phase})
+        setLog(prev => [...prev, {kind: 'phase', phase}])
+      },
+      onSample: sample => {
+        setLog(prev => [...prev, {kind: 'sample', sample}])
+      },
+    }).then(
+      result => {
+        abortControllerRef.current = undefined
+        setStatus({kind: 'done', result})
+      },
+      (error: unknown) => {
+        abortControllerRef.current = undefined
+
+        if (abortController.signal.aborted) {
+          // Cancelled by the user (or unmount): back to the initial state, no leftover output.
+          setStatus({kind: 'idle'})
+          setLog([])
+          return
+        }
+
+        const isTimeout = error instanceof DOMException && error.name === 'TimeoutError'
+        setStatus({kind: 'error', reason: isTimeout ? 'timeout' : 'failed', error})
+      },
+    )
+  }, [])
+
+  const cancel = useCallback(() => {
+    abortControllerRef.current?.abort()
+  }, [])
+
+  return {status, log, start, cancel}
+}
+
+// Types ///////////////////////////////////////////////////////////////////////
+
+export type SpeedtestStatus =
+  | {kind: 'idle'}
+  | {kind: 'running'; phase: SpeedtestPhase}
+  | {kind: 'done'; result: SpeedtestResult}
+  | {kind: 'error'; reason: 'timeout' | 'failed'; error: unknown}
+
+/** One line of the live log: a phase header or a progress sample. */
+export type SpeedtestLogEntry =
+  | {kind: 'phase'; phase: SpeedtestPhase}
+  | {kind: 'sample'; sample: SpeedtestProgressSample}
+
+export interface UseSpeedtestContract {
+  status: SpeedtestStatus
+  log: Array<SpeedtestLogEntry>
+  start: () => void
+  cancel: () => void
+}
