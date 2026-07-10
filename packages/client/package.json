@@ -16,7 +16,8 @@
   ],
   "scripts": {
     "build": "tsc --project tsconfig.json",
-    "test": "node --test --enable-source-maps './tests/**/*.test.ts'"
+    "test": "node --test --enable-source-maps './tests/**/*.test.ts'",
+    "prepublishOnly": "npm run build"
   },
   "engines": {
     "node": ">=20"
@@ -30,9 +31,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/staffetta/staffetta.git",
+    "url": "git+https://github.com/staffetta/staffetta.git",
     "directory": "packages/client"
   },
+  "homepage": "https://github.com/staffetta/staffetta#readme",
+  "bugs": "https://github.com/staffetta/staffetta/issues",
   "keywords": [
     "speedtest",
     "bandwidth",
@@ -41,7 +44,6 @@
     "browser"
   ],
   "publishConfig": {
-    "registry": "https://npm.pkg.github.com",
-    "access": "restricted"
+    "access": "public"
   }
 }

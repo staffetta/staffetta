@@ -15,7 +15,8 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc --project tsconfig.json"
+    "build": "tsc --project tsconfig.json",
+    "prepublishOnly": "npm run build"
   },
   "engines": {
     "node": ">=20"
@@ -33,9 +34,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/staffetta/staffetta.git",
+    "url": "git+https://github.com/staffetta/staffetta.git",
     "directory": "packages/react"
   },
+  "homepage": "https://github.com/staffetta/staffetta#readme",
+  "bugs": "https://github.com/staffetta/staffetta/issues",
   "keywords": [
     "speedtest",
     "react",
@@ -43,7 +46,6 @@
     "bandwidth"
   ],
   "publishConfig": {
-    "registry": "https://npm.pkg.github.com",
-    "access": "restricted"
+    "access": "public"
   }
 }
