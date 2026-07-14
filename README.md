@@ -10,6 +10,9 @@ sequence (**ping → download → upload**), where the baton is the bytes passed
 and **your own server**. No third-party measurement servers: you mount three endpoints on your
 backend and measure the path your users actually use.
 
+**[Try the live demo →](https://staffetta.github.io/staffetta/)** — the client running against a
+Cloudflare Worker, with the raw sample log open.
+
 - **Framework-free client** — plain `fetch`, runs in browsers and Node.
 - **Framework-agnostic server** — a Web-standard `(Request) => Response` handler that mounts
   natively on Hono, Next.js, Bun, Deno, Cloudflare Workers, SvelteKit… plus a Node `http`
