@@ -2,7 +2,13 @@ import {type Provider, type Signal, signal} from '@angular/core'
 import {runSpeedtest, type SpeedtestClientOptions, SpeedtestTimeoutError} from '@staffetta/client'
 import type {SpeedtestLogEntry, SpeedtestStatus} from '@staffetta/core'
 
-export type {SpeedtestLogEntry, SpeedtestStatus} from '@staffetta/core'
+export type {
+  SpeedtestLogEntry,
+  SpeedtestPhase,
+  SpeedtestResult,
+  SpeedtestStatus,
+  SpeedtestVerdict,
+} from '@staffetta/core'
 
 export type SpeedtestServiceOptions = Omit<SpeedtestClientOptions, 'signal' | 'onPhase' | 'onSample'>
 

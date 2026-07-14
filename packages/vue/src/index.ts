@@ -2,7 +2,13 @@ import {runSpeedtest, type SpeedtestClientOptions, SpeedtestTimeoutError} from '
 import type {SpeedtestLogEntry, SpeedtestStatus} from '@staffetta/core'
 import {getCurrentScope, type MaybeRefOrGetter, onScopeDispose, type ShallowRef, shallowRef, toValue} from 'vue'
 
-export type {SpeedtestLogEntry, SpeedtestStatus} from '@staffetta/core'
+export type {
+  SpeedtestLogEntry,
+  SpeedtestPhase,
+  SpeedtestResult,
+  SpeedtestStatus,
+  SpeedtestVerdict,
+} from '@staffetta/core'
 
 export type UseSpeedtestOptions = Omit<SpeedtestClientOptions, 'signal' | 'onPhase' | 'onSample'>
 

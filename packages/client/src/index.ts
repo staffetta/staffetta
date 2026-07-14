@@ -42,6 +42,22 @@ const MaxOverlapLeadMs = 500
  */
 const DownloadSizeOvershootFactor = 1.25
 
+// Everything the public API surface references, so consumers type against this package
+// alone instead of having to know the types live in @staffetta/core.
+export type {
+  SpeedtestConfig,
+  SpeedtestLatencyStats,
+  SpeedtestLoadedLatency,
+  SpeedtestPartialResult,
+  SpeedtestPaths,
+  SpeedtestPhase,
+  SpeedtestProgressSample,
+  SpeedtestResult,
+  SpeedtestThroughputStats,
+  SpeedtestVerdict,
+  SpeedtestVerdictThresholds,
+} from '@staffetta/core'
+
 export interface SpeedtestClientOptions {
   /** Base URL of the server under test, e.g. `https://api.example.com`. */
   baseUrl: string

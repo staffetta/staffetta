@@ -2,7 +2,13 @@ import {runSpeedtest, type SpeedtestClientOptions, SpeedtestTimeoutError} from '
 import type {SpeedtestLogEntry, SpeedtestStatus} from '@staffetta/core'
 import {useCallback, useEffect, useRef, useState} from 'react'
 
-export type {SpeedtestLogEntry, SpeedtestStatus} from '@staffetta/core'
+export type {
+  SpeedtestLogEntry,
+  SpeedtestPhase,
+  SpeedtestResult,
+  SpeedtestStatus,
+  SpeedtestVerdict,
+} from '@staffetta/core'
 
 export type UseSpeedtestOptions = Omit<SpeedtestClientOptions, 'signal' | 'onPhase' | 'onSample'>
 
