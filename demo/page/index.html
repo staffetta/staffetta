@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>staffetta — self-hosted speedtest, live demo</title>
+    <meta
+      name="description"
+      content="Live demo of staffetta: an open-source speedtest library that measures the path between your users and your own server."
+    />
+    <link rel="icon" type="image/svg+xml" href="./brand/favicon.svg" />
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="masthead">
+        <picture class="lockup">
+          <source media="(prefers-color-scheme: dark)" srcset="./brand/lockup-dark.svg" />
+          <img src="./brand/lockup.svg" alt="staffetta" width="235" height="55" />
+        </picture>
+        <a class="repo-link" href="https://github.com/staffetta/staffetta">GitHub</a>
+      </header>
+
+      <p class="tagline">
+        A speedtest is a relay race: ping &rarr; download &rarr; upload, run against
+        <em>your own server</em> &mdash; no third-party measurement servers. This demo measures the
+        path between your browser and a Cloudflare Worker running
+        <code>@staffetta/server</code> unmodified.
+      </p>
+
+      <section class="panel" id="panel">
+        <div class="panel-idle" id="view-idle">
+          <button class="start" id="start">Run speedtest</button>
+        </div>
+
+        <div class="panel-running" id="view-running" hidden>
+          <div class="phase-track" aria-live="polite">
+            <span class="phase" data-phase="ping">ping</span>
+            <span class="phase" data-phase="download">download</span>
+            <span class="phase" data-phase="upload">upload</span>
+          </div>
+          <p class="live" id="live">&nbsp;</p>
+          <button class="cancel" id="cancel">Cancel</button>
+        </div>
+
+        <div class="panel-done" id="view-done" hidden>
+          <p class="verdict" id="verdict"></p>
+          <dl class="results" id="results"></dl>
+          <button class="again" id="again">Run again</button>
+        </div>
+
+        <div class="panel-error" id="view-error" hidden>
+          <p class="error" id="error"></p>
+          <button class="again" id="retry">Try again</button>
+        </div>
+      </section>
+
+      <section class="chart" id="chart" hidden aria-label="Throughput over time">
+        <div class="chart-head">
+          <span class="chart-title">Download throughput <small>Mbps, per 250 ms window</small></span>
+          <button class="console-toggle" id="console-toggle" aria-expanded="false" aria-controls="console">Show log</button>
+        </div>
+        <div class="chart-body">
+          <canvas id="chart-canvas"></canvas>
+          <div class="chart-tooltip" id="chart-tooltip" hidden></div>
+        </div>
+      </section>
+
+      <section class="console" id="console" hidden aria-label="Test log">
+        <div class="console-scroll" id="console-scroll"></div>
+      </section>
+
+      <footer class="footnote">
+        Demo transfers are capped at 32&nbsp;MiB per request and a few seconds per phase &mdash;
+        it shows the methodology, it is not meant to saturate a multi-gigabit link. MIT licensed.
+      </footer>
+    </main>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

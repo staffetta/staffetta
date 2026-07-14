@@ -1,0 +1,382 @@
+/* Tokens from docs/brand/README.md: race orange #E8541F is the single accent of the
+   system; inks and greys come from the lockup variants. */
+:root {
+  --paper: #fafaf8;
+  --ink: #161a1e;
+  --ink-soft: #4d555d;
+  --ink-faint: #8a929a;
+  --line: #e3e3df;
+  --panel: #f2f1ee;
+  --accent: #e8541f;
+  --accent-ink: #ffffff;
+  /* Same orange family, darkened enough to stay legible as small text on light paper. */
+  --accent-text: #c64512;
+  --optimal: #2e7d3b;
+  --good: #4a8a56;
+  --unstable: #b0731c;
+  --critical: #a33a2f;
+  /* Chart series color, contrast-validated against both panel surfaces. */
+  --chart-download: #e8541f;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #14171a;
+    --ink: #e8eae6;
+    --ink-soft: #aab0b6;
+    --ink-faint: #6d757d;
+    --line: #2a2f34;
+    --panel: #1c2126;
+    --accent: #e8541f;
+    --accent-ink: #ffffff;
+    --accent-text: #f2683a;
+    --optimal: #6cbf78;
+    --good: #8fbf98;
+    --unstable: #d9a05b;
+    --critical: #d97b70;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family:
+    'Avenir Next', Futura, 'Century Gothic', -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    Roboto, sans-serif;
+  line-height: 1.6;
+}
+
+.page {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 2rem 1.25rem 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.75rem;
+}
+
+.masthead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.lockup img {
+  display: block;
+  width: 235px;
+  max-width: 60vw;
+  height: auto;
+}
+
+.repo-link {
+  color: var(--accent-text);
+  font-size: 0.9rem;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.repo-link:hover,
+.repo-link:focus-visible {
+  text-decoration: underline;
+}
+
+.tagline {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 1.02rem;
+  text-wrap: pretty;
+}
+
+.tagline code {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 0.9em;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 2rem 1.75rem;
+  min-height: 11rem;
+  display: grid;
+  place-items: center;
+}
+
+.panel > div {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.1rem;
+}
+
+/* Author styles beat the UA stylesheet regardless of specificity: without this rule the
+   display:flex above would override the `hidden` attribute and stack every view at once. */
+.panel > div[hidden] {
+  display: none;
+}
+
+button {
+  font: inherit;
+  font-size: 1rem;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.75rem;
+  padding: 0 1.6rem;
+  border-radius: 8px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.start,
+.again {
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+.start:hover,
+.again:hover {
+  filter: brightness(1.08);
+}
+
+.cancel {
+  background: transparent;
+  color: var(--ink-soft);
+  border-color: var(--line);
+}
+
+.cancel:hover {
+  border-color: var(--ink-faint);
+}
+
+.phase-track {
+  display: flex;
+  gap: 0.5rem;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.phase {
+  padding: 0.25rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--ink-faint);
+}
+
+/* The check occupies its slot from the start so pills keep their width when it appears. */
+.phase::before {
+  content: '✓';
+  opacity: 0;
+  margin-right: 0.35em;
+}
+
+.phase.active {
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.phase.done {
+  color: var(--ink-soft);
+  border-color: transparent;
+}
+
+.phase.done::before {
+  opacity: 1;
+}
+
+.live {
+  margin: 0;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 1.7rem;
+  min-height: 1.4em;
+}
+
+.live small {
+  font-size: 0.55em;
+  color: var(--ink-soft);
+}
+
+.verdict {
+  margin: 0;
+  font-weight: 600;
+  font-size: 1.15rem;
+  text-transform: capitalize;
+}
+
+.verdict::before {
+  content: '● ';
+  font-size: 0.8em;
+}
+
+.verdict[data-verdict='optimal'] { color: var(--optimal); }
+.verdict[data-verdict='good'] { color: var(--good); }
+.verdict[data-verdict='unstable'] { color: var(--unstable); }
+.verdict[data-verdict='critical'] { color: var(--critical); }
+
+.results {
+  margin: 0;
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  gap: 0.9rem 1.25rem;
+}
+
+.results > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.results dt {
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.results dd {
+  margin: 0;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 1.25rem;
+}
+
+.results dd small {
+  font-size: 0.6em;
+  color: var(--ink-soft);
+}
+
+.error {
+  margin: 0;
+  color: var(--critical);
+  text-align: center;
+}
+
+.chart {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 1rem 1.1rem 0.8rem;
+}
+
+.chart-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.6rem;
+}
+
+.chart-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.chart-title small {
+  font-weight: 400;
+  color: var(--ink-faint);
+}
+
+.chart-body {
+  position: relative;
+}
+
+#chart-canvas {
+  display: block;
+  width: 100%;
+  height: 180px;
+}
+
+.console-toggle {
+  background: transparent;
+  color: var(--ink-soft);
+  border-color: var(--line);
+  min-height: 1.9rem;
+  padding: 0 0.8rem;
+  font-size: 0.78rem;
+  border-radius: 6px;
+}
+
+.console-toggle:hover {
+  border-color: var(--ink-faint);
+}
+
+.chart-tooltip {
+  position: absolute;
+  pointer-events: none;
+  white-space: pre;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.35rem 0.55rem;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 0.72rem;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-soft);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 12%);
+}
+
+/* Terminal-style sample log: deliberately dark in both themes, like the ping utility
+   output it mimics. */
+.console {
+  background: #14171a;
+  border: 1px solid #2a2f34;
+  border-radius: 10px;
+  padding: 0.4rem;
+}
+
+.console-scroll {
+  max-height: 14rem;
+  overflow-y: auto;
+  padding: 0.6rem 0.9rem;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 0.8rem;
+  line-height: 1.55;
+  font-variant-numeric: tabular-nums;
+  color: #c8cdd2;
+  overscroll-behavior: contain;
+}
+
+.console-line {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.console-tag {
+  display: inline-block;
+  min-width: 8ch;
+  color: #6d757d;
+}
+
+/* download/upload match the chart series hues (lightened for the dark terminal bg):
+   color follows the entity across console, chart and legend. */
+.console-tag-run { color: #e8eae6; }
+.console-tag-ping { color: #8fbf98; }
+.console-tag-download { color: #f2794a; }
+.console-tag-upload { color: #6ea8dd; }
+.console-tag-probe { color: #b39ddb; }
+
+.footnote {
+  color: var(--ink-faint);
+  font-size: 0.85rem;
+  text-wrap: pretty;
+}

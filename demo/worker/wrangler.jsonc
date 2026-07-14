@@ -2,5 +2,8 @@
   "name": "staffetta-demo",
   "main": "src/index.ts",
   "compatibility_date": "2026-06-01",
-  "workers_dev": true
+  "workers_dev": true,
+  // Enable once staffetta.net is moved to the personal Cloudflare account (inter-account
+  // registrar move, possible from ~2026-07-24: registration must be >10 days old).
+  // "routes": [{"pattern": "speedtest.staffetta.net", "custom_domain": true, "zone_name": "staffetta.net"}]
 }

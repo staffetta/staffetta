@@ -1,0 +1,16 @@
+{
+  "name": "@staffetta/demo-page",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@staffetta/client": "workspace:^"
+  },
+  "devDependencies": {
+    "vite": "^7.0.0"
+  }
+}
