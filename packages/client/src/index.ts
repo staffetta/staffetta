@@ -332,14 +332,19 @@ async function runUploadPhase(context: SpeedtestContext, overlapLeadMs: number):
   const deadlineMs = startMs + config.transferDurationMs
 
   const chunks: Array<SpeedtestTransferChunk> = []
-  const progress = createProgressWindow(context, 'upload', startMs)
+  const progress = createUploadProgressEmitter(context, startMs)
+  // In-flight POSTs across the streams: the live-progress watermark — a window is only
+  // emitted once no POST still in flight could spread bytes into it.
+  const inflight = new Set<PostedUpload>()
   // Where the accounted transfer really ends (the last spread's edge, not its last piece).
   let spreadEndMaxMs = startMs
 
   const postChunk = (sizeBytes: number): PostedUpload => {
     const reply = requestUpload(context, payloadPool.slice(0, sizeBytes, 'application/octet-stream'), phase.signal)
     reply.catch(() => {}) // May reject (phase abort) before it is settled; settlePost still sees the rejection.
-    return {sentAtMs: performance.now(), sizeBytes, reply}
+    const posted: PostedUpload = {sentAtMs: performance.now(), sizeBytes, reply}
+    inflight.add(posted)
+    return posted
   }
 
   /** Awaits the reply, accounts the transfer, and returns the observed rate in bytes/ms. */
@@ -360,16 +365,18 @@ async function runUploadPhase(context: SpeedtestContext, overlapLeadMs: number):
     const receiveEndMs = Math.max(posted.sentAtMs + receiveElapsedMs, nowMs - overlapLeadMs / 2)
     spreadEndMaxMs = Math.max(spreadEndMaxMs, receiveEndMs)
 
-    chunks.push(
-      ...spreadTransferChunks({
-        bytes: reply.bytesReceived,
-        endMs: receiveEndMs,
-        elapsedMs: receiveElapsedMs,
-        intervalMs: config.sampleIntervalMs,
-        gridOriginMs: startMs,
-      }),
-    )
-    progress.add(reply.bytesReceived, nowMs, bytesToMbps(reply.bytesReceived, receiveElapsedMs))
+    const spread = spreadTransferChunks({
+      bytes: reply.bytesReceived,
+      endMs: receiveEndMs,
+      elapsedMs: receiveElapsedMs,
+      intervalMs: config.sampleIntervalMs,
+      gridOriginMs: startMs,
+    })
+    chunks.push(...spread)
+
+    inflight.delete(posted)
+    progress.addChunks(spread)
+    progress.flushThrough(Math.min(nowMs, ...[...inflight].map(post => post.sentAtMs)))
 
     return reply.bytesReceived / Math.max(1, receiveElapsedMs)
   }
@@ -426,6 +433,7 @@ async function runUploadPhase(context: SpeedtestContext, overlapLeadMs: number):
   // The measured transfer ends where the last spread ends: what follows is only the final
   // reply's round trip, and counting it would dilute the tail window and the average.
   const endMs = spreadEndMaxMs > startMs ? spreadEndMaxMs : performance.now()
+  progress.finish(endMs)
   const loadedRttSamplesMs = await sampler.stop()
 
   return {
@@ -592,21 +600,72 @@ function createProgressWindow(context: SpeedtestContext, phase: 'download' | 'up
   let totalBytes = 0
 
   return {
-    /** `mbps` overrides the window rate for event-sized transfers (one upload POST = one event). */
-    add(bytes: number, nowMs: number, mbps?: undefined | number) {
+    add(bytes: number, nowMs: number) {
       totalBytes += bytes
       windowBytes += bytes
 
-      if (mbps !== undefined || nowMs - windowStartMs >= config.sampleIntervalMs) {
+      if (nowMs - windowStartMs >= config.sampleIntervalMs) {
         onSample?.({
           phase,
           kind: 'throughput',
-          mbps: roundTo(mbps ?? bytesToMbps(windowBytes, nowMs - windowStartMs), 2),
+          mbps: roundTo(bytesToMbps(windowBytes, nowMs - windowStartMs), 2),
           transferredBytes: totalBytes,
           elapsedMs: Math.round(nowMs - startMs),
         })
         windowStartMs = nowMs
         windowBytes = 0
+      }
+    },
+  }
+}
+
+/**
+ * Live upload progress on the sampling grid. Upload bytes are only observable when a POST
+ * settles (fetch cannot watch a request body in flight), so a per-POST average would draw a
+ * flat line spanning the phase. Instead the spread chunks are accumulated into grid windows,
+ * and a window is emitted once it is final — no in-flight POST can land bytes into it, since
+ * a spread never starts before its POST's `sentAtMs`. Windows without bytes emit 0 Mbps: a
+ * stall is a real dip, not a missing sample. Display only: stats are recomputed later.
+ */
+function createUploadProgressEmitter(context: SpeedtestContext, startMs: number) {
+  const {config, onSample} = context
+  const intervalMs = config.sampleIntervalMs
+  const windowsBytes = new Map<number, number>()
+  let nextWindowIdx = 0
+  let totalBytes = 0
+
+  const emitWindow = (idx: number, windowMs: number) => {
+    const bytes = windowsBytes.get(idx) ?? 0
+    totalBytes += bytes
+    onSample?.({
+      phase: 'upload',
+      kind: 'throughput',
+      mbps: roundTo(bytesToMbps(bytes, windowMs), 2),
+      transferredBytes: Math.round(totalBytes),
+      elapsedMs: Math.round(idx * intervalMs + windowMs),
+    })
+  }
+
+  return {
+    addChunks(chunks: Array<SpeedtestTransferChunk>) {
+      for (const chunk of chunks) {
+        const idx = Math.max(0, Math.floor((chunk.atMs - startMs) / intervalMs))
+        windowsBytes.set(idx, (windowsBytes.get(idx) ?? 0) + chunk.bytes)
+      }
+    },
+    /** Emits every window that ends at or before `safeMs`, in order. */
+    flushThrough(safeMs: number) {
+      if (!onSample || intervalMs <= 0) return
+      const lastFinalIdx = Math.floor((safeMs - startMs) / intervalMs) - 1
+      for (; nextWindowIdx <= lastFinalIdx; nextWindowIdx++) {
+        emitWindow(nextWindowIdx, intervalMs)
+      }
+    },
+    /** Emits what remains at phase end; the trailing partial window keeps its real duration. */
+    finish(endMs: number) {
+      if (!onSample || intervalMs <= 0) return
+      for (; nextWindowIdx * intervalMs < endMs - startMs; nextWindowIdx++) {
+        emitWindow(nextWindowIdx, Math.min(intervalMs, endMs - startMs - nextWindowIdx * intervalMs))
       }
     },
   }
