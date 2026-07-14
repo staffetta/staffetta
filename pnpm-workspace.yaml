@@ -1,2 +1,8 @@
 packages:
   - packages/*
+  - demo/*
+
+onlyBuiltDependencies:
+  - workerd
+  - esbuild
+  - sharp

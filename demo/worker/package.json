@@ -1,0 +1,15 @@
+{
+  "name": "@staffetta/demo-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "@staffetta/server": "workspace:^"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
