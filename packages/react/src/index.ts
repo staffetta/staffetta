@@ -1,6 +1,8 @@
 import {runSpeedtest, type SpeedtestClientOptions, SpeedtestTimeoutError} from '@staffetta/client'
-import type {SpeedtestPartialResult, SpeedtestPhase, SpeedtestProgressSample, SpeedtestResult} from '@staffetta/core'
+import type {SpeedtestLogEntry, SpeedtestStatus} from '@staffetta/core'
 import {useCallback, useEffect, useRef, useState} from 'react'
+
+export type {SpeedtestLogEntry, SpeedtestStatus} from '@staffetta/core'
 
 export type UseSpeedtestOptions = Omit<SpeedtestClientOptions, 'signal' | 'onPhase' | 'onSample'>
 
@@ -73,18 +75,6 @@ export function useSpeedtest(options: UseSpeedtestOptions): UseSpeedtestContract
 }
 
 // Types ///////////////////////////////////////////////////////////////////////
-
-export type SpeedtestStatus =
-  | {kind: 'idle'}
-  | {kind: 'running'; phase: SpeedtestPhase}
-  | {kind: 'done'; result: SpeedtestResult}
-  /** On timeout, `partial` carries what was measured before the test stalled. */
-  | {kind: 'error'; reason: 'timeout' | 'failed'; error: unknown; partial?: undefined | SpeedtestPartialResult}
-
-/** One line of the live log: a phase header or a progress sample. */
-export type SpeedtestLogEntry =
-  | {kind: 'phase'; phase: SpeedtestPhase}
-  | {kind: 'sample'; sample: SpeedtestProgressSample}
 
 export interface UseSpeedtestContract {
   status: SpeedtestStatus

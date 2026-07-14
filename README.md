@@ -31,6 +31,8 @@ backend and measure the path your users actually use.
 | `@staffetta/client` | The test engine: `runSpeedtest()`. |
 | `@staffetta/server` | Fetch handler, Node adapter (`/node`), stream primitives. |
 | `@staffetta/react` | `useSpeedtest()` hook over the client. |
+| `@staffetta/vue` | `useSpeedtest()` composable over the client. |
+| `@staffetta/angular` | Signal-based `SpeedtestService` over the client. |
 
 ## Server
 
@@ -59,6 +61,25 @@ createServer(createSpeedtestNodeListener()).listen(8080)
 
 // Express
 app.use(createSpeedtestNodeListener())
+```
+
+### Express / NestJS / Fastify middleware
+
+The pass-through variant of the listener: requests outside the three protocol endpoints fall
+through to `next()`, so it composes with the rest of the application. Register it globally
+(mounting it under a sub-path would strip the prefix the URL is matched against) — it handles
+the endpoints before the framework's routing and body parsing, keeping interceptors, guards
+and JSON body parsers off the measured path.
+
+```ts
+import {createSpeedtestNodeMiddleware} from '@staffetta/server/node'
+
+// Express
+app.use(createSpeedtestNodeMiddleware())
+
+// NestJS — main.ts (Express adapter, or Fastify via @fastify/middie)
+const app = await NestFactory.create(AppModule)
+app.use(createSpeedtestNodeMiddleware())
 ```
 
 ### Options
@@ -159,6 +180,47 @@ function SpeedtestPanel() {
   )
 }
 ```
+
+## Vue
+
+```vue
+<script setup lang="ts">
+import {useSpeedtest} from '@staffetta/vue'
+
+const {status, log, start, cancel} = useSpeedtest({baseUrl: 'https://api.example.com'})
+</script>
+
+<template>
+  <div>
+    <button v-if="status.kind === 'idle'" @click="start">Run speedtest</button>
+    <button v-if="status.kind === 'running'" @click="cancel">Cancel ({{ status.phase }}…)</button>
+    <pre v-if="status.kind === 'done'">{{ status.result }}</pre>
+    <p v-if="status.kind === 'error'">Test failed: {{ status.reason }}</p>
+    <ul><li v-for="(entry, idx) in log" :key="idx">{{ entry }}</li></ul>
+  </div>
+</template>
+```
+
+## Angular
+
+```ts
+import {Component, inject} from '@angular/core'
+import {provideSpeedtest, SpeedtestService} from '@staffetta/angular'
+
+@Component({
+  selector: 'speedtest-panel',
+  providers: [provideSpeedtest()],
+  template: `…` // read speedtest.status() and speedtest.log(), both signals
+})
+export class SpeedtestPanel {
+  readonly speedtest = inject(SpeedtestService)
+  // speedtest.start({baseUrl: 'https://api.example.com'}) / speedtest.cancel()
+}
+```
+
+The service is decorator-free (plain class + signals), so the package ships as regular ESM
+with no Angular compiler in the loop; `provideSpeedtest()` registers it in a component's
+`providers` (one test per component, aborted on destroy) or in the bootstrap providers.
 
 ## The protocol
 

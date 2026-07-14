@@ -1,0 +1,52 @@
+{
+  "name": "@staffetta/angular",
+  "version": "0.1.0",
+  "description": "Angular bindings for the staffetta speedtest client: a signal-based SpeedtestService with status, live log, start and cancel.",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc --project tsconfig.json",
+    "prepublishOnly": "npm run build"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@staffetta/client": "workspace:^",
+    "@staffetta/core": "workspace:^"
+  },
+  "peerDependencies": {
+    "@angular/core": ">=17"
+  },
+  "devDependencies": {
+    "@angular/core": "^20.0.0",
+    "rxjs": "^7.8.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/staffetta/staffetta.git",
+    "directory": "packages/angular"
+  },
+  "homepage": "https://github.com/staffetta/staffetta#readme",
+  "bugs": "https://github.com/staffetta/staffetta/issues",
+  "keywords": [
+    "speedtest",
+    "angular",
+    "service",
+    "signals",
+    "bandwidth"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

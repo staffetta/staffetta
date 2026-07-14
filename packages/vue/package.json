@@ -1,0 +1,50 @@
+{
+  "name": "@staffetta/vue",
+  "version": "0.1.0",
+  "description": "Vue bindings for the staffetta speedtest client: a useSpeedtest composable with status, live log, start and cancel.",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc --project tsconfig.json",
+    "prepublishOnly": "npm run build"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@staffetta/client": "workspace:^",
+    "@staffetta/core": "workspace:^"
+  },
+  "peerDependencies": {
+    "vue": ">=3.3"
+  },
+  "devDependencies": {
+    "vue": "^3.5.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/staffetta/staffetta.git",
+    "directory": "packages/vue"
+  },
+  "homepage": "https://github.com/staffetta/staffetta#readme",
+  "bugs": "https://github.com/staffetta/staffetta/issues",
+  "keywords": [
+    "speedtest",
+    "vue",
+    "composable",
+    "bandwidth"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

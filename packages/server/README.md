@@ -38,6 +38,28 @@ createServer(createSpeedtestNodeListener()).listen(8080)
 app.use(createSpeedtestNodeListener())
 ```
 
+## Express / NestJS / Fastify middleware
+
+`createSpeedtestNodeMiddleware` is the pass-through variant of the listener: requests outside
+the three protocol endpoints fall through to `next()`, so it composes with the rest of the
+application without claiming a route prefix. Register it globally (mounting it under a
+sub-path would strip the prefix the URL is matched against).
+
+```ts
+import {createSpeedtestNodeMiddleware} from '@staffetta/server/node'
+
+// Express
+app.use(createSpeedtestNodeMiddleware())
+
+// NestJS — main.ts (Express adapter, or Fastify via @fastify/middie)
+const app = await NestFactory.create(AppModule)
+app.use(createSpeedtestNodeMiddleware())
+```
+
+The middleware handles the endpoints before the framework's routing and body parsing, which
+is what you want on the measured path: no interceptor, guard or JSON body parser adds latency
+to ping or buffers the upload stream.
+
 ## Options
 
 ```ts

@@ -1,8 +1,19 @@
 import type {IncomingMessage, ServerResponse} from 'node:http'
 import {Readable} from 'node:stream'
-import {createSpeedtestFetchHandler, type SpeedtestHandlerOptions} from './handler.ts'
+import {
+  createSpeedtestFetchHandler,
+  resolveSpeedtestPhase,
+  SpeedtestDefaultBasePath,
+  type SpeedtestHandlerOptions,
+} from './handler.ts'
 
 export type NodeRequestListener = (request: IncomingMessage, response: ServerResponse) => void
+
+export type NodeMiddleware = (
+  request: IncomingMessage,
+  response: ServerResponse,
+  next: (error?: unknown) => void,
+) => void
 
 /**
  * Node `http` adapter over the fetch handler, usable directly with `http.createServer` or
@@ -26,6 +37,29 @@ export function createSpeedtestNodeListener(options: SpeedtestHandlerOptions = {
         }
         request.socket.emit('error', error) // Surfaces through the server 'clientError'/'error' handling.
       })
+  }
+}
+
+/**
+ * Connect-style pass-through variant of the listener: requests outside the three protocol
+ * endpoints fall through to `next()`, so it composes with the rest of an application without
+ * claiming a route prefix. Register it globally (Express `app.use(...)`, NestJS
+ * `app.use(...)` in `main.ts` or `MiddlewareConsumer#apply`, Fastify via `@fastify/middie`);
+ * mounting it under a sub-path (`app.use('/x', ...)`) would strip the prefix `request.url`
+ * is matched against.
+ */
+export function createSpeedtestNodeMiddleware(options: SpeedtestHandlerOptions = {}): NodeMiddleware {
+  const listener = createSpeedtestNodeListener(options)
+  const basePath = options.basePath ?? SpeedtestDefaultBasePath
+
+  return function speedtestNodeMiddleware(request, response, next) {
+    const pathname = (request.url ?? '/').split('?', 1)[0] ?? '/'
+
+    if (resolveSpeedtestPhase(pathname, basePath)) {
+      listener(request, response)
+    } else {
+      next()
+    }
   }
 }
 

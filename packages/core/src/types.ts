@@ -134,6 +134,22 @@ export interface SpeedtestPartialResult {
   loadedLatency?: undefined | SpeedtestLoadedLatency
 }
 
+/**
+ * Lifecycle of a UI-driven test run, shared by the framework bindings (react, vue, angular).
+ * `cancel` returns to `idle`; a phase timeout lands on `error` with `reason: 'timeout'`.
+ */
+export type SpeedtestStatus =
+  | {kind: 'idle'}
+  | {kind: 'running'; phase: SpeedtestPhase}
+  | {kind: 'done'; result: SpeedtestResult}
+  /** On timeout, `partial` carries what was measured before the test stalled. */
+  | {kind: 'error'; reason: 'timeout' | 'failed'; error: unknown; partial?: undefined | SpeedtestPartialResult}
+
+/** One line of the live log kept by the framework bindings: a phase header or a progress sample. */
+export type SpeedtestLogEntry =
+  | {kind: 'phase'; phase: SpeedtestPhase}
+  | {kind: 'sample'; sample: SpeedtestProgressSample}
+
 /** One received chunk, timestamped for the fixed-window throughput sampling. */
 export interface SpeedtestTransferChunk {
   bytes: number

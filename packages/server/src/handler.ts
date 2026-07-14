@@ -1,6 +1,9 @@
 import {SpeedtestDefaultMaxSizeBytes, type SpeedtestPhase, type SpeedtestPingReply} from '@staffetta/core'
 import {consumeUploadStream, createDownloadStream, SpeedtestPayloadTooLargeError} from './streams.ts'
 
+/** Path prefix the three endpoints are served under when `basePath` is not given. */
+export const SpeedtestDefaultBasePath = '/speedtest'
+
 export interface SpeedtestHandlerOptions {
   /** Path prefix the three endpoints are served under. Default: `/speedtest`. */
   basePath?: undefined | string
@@ -24,12 +27,12 @@ export interface SpeedtestHandlerOptions {
 export function createSpeedtestFetchHandler(
   options: SpeedtestHandlerOptions = {},
 ): (request: Request) => Promise<Response> {
-  const basePath = options.basePath ?? '/speedtest'
+  const basePath = options.basePath ?? SpeedtestDefaultBasePath
   const maxSizeBytes = options.maxSizeBytes ?? SpeedtestDefaultMaxSizeBytes
 
   return async function handleSpeedtestRequest(request: Request): Promise<Response> {
     const url = new URL(request.url)
-    const phase = resolvePhase(url.pathname, basePath)
+    const phase = resolveSpeedtestPhase(url.pathname, basePath)
 
     if (!phase) {
       return jsonResponse(404, {error: 'not found'})
@@ -90,7 +93,8 @@ async function handleUpload(request: Request, maxSizeBytes: number): Promise<Res
   }
 }
 
-function resolvePhase(pathname: string, basePath: string): SpeedtestPhase | undefined {
+/** Maps a request pathname to the protocol phase it addresses, or `undefined` outside the three endpoints. */
+export function resolveSpeedtestPhase(pathname: string, basePath: string): SpeedtestPhase | undefined {
   const normalizedBase = basePath.endsWith('/') ? basePath.slice(0, -1) : basePath
 
   switch (pathname) {
