@@ -1,6 +1,6 @@
 {
   "name": "@staffetta/client",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Client engine of the staffetta speedtest: runs the ping → download → upload relay against any server implementing the protocol. Framework-free, fetch-based.",
   "license": "MIT",
   "type": "module",

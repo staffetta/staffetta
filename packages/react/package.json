@@ -1,6 +1,6 @@
 {
   "name": "@staffetta/react",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "React bindings for the staffetta speedtest client: a useSpeedtest hook with status, live log, start and cancel.",
   "license": "MIT",
   "type": "module",

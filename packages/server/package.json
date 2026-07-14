@@ -1,6 +1,6 @@
 {
   "name": "@staffetta/server",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Server side of the staffetta speedtest: stream primitives, a Web-standard fetch handler and a Node http adapter. Framework-agnostic.",
   "license": "MIT",
   "type": "module",

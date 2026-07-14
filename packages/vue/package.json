@@ -1,6 +1,6 @@
 {
   "name": "@staffetta/vue",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Vue bindings for the staffetta speedtest client: a useSpeedtest composable with status, live log, start and cancel.",
   "license": "MIT",
   "type": "module",

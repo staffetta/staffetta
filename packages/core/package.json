@@ -1,6 +1,6 @@
 {
   "name": "@staffetta/core",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Protocol types, wire contract and measurement math shared by the staffetta speedtest client and server.",
   "license": "MIT",
   "type": "module",
