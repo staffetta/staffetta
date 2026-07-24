@@ -10,7 +10,7 @@ sequence (**ping → download → upload**), where the baton is the bytes passed
 and **your own server**. No third-party measurement servers: you mount three endpoints on your
 backend and measure the path your users actually use.
 
-**[Try the live demo →](https://staffetta.github.io/staffetta/)** — the client running against a
+**[Try the live demo →](https://staffetta.net/)** — the client running against a
 Cloudflare Worker, with the raw sample log open.
 
 - **Framework-free client** — plain `fetch`, runs in browsers and Node.
