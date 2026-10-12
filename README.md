@@ -18,9 +18,10 @@ Cloudflare Worker, with the raw sample log open.
   natively on Hono, Next.js, Bun, Deno, Cloudflare Workers, SvelteKit… plus a Node `http`
   adapter for Express and friends. Or skip both and use the raw stream primitives.
 - **An open protocol** — three documented HTTP endpoints; implement them in any language.
-- **Real statistics** — average, min/max, p50/p90 percentiles, jitter (RTT std dev), stability
-  (trimmed coefficient of variation of the throughput windows), latency under load
-  (bufferbloat), and an explainable verdict with configurable thresholds.
+- **Real statistics** — average, min/max, p50/p90 percentiles, jitter (mean difference between
+  consecutive RTTs), stability (trimmed coefficient of variation of the throughput windows),
+  latency under load (bufferbloat), and an explainable verdict with configurable thresholds and
+  the reasons behind it.
 - **A modern methodology** — parallel connections saturate high-bandwidth links, each transfer
   phase runs for a target duration with adaptively ramped request sizes (slow links move little
   data, fast links move a lot), and concurrent latency probes measure the RTT while the link is
@@ -127,7 +128,8 @@ const result = await runSpeedtest({
 //          latency: {avgMs, minMs, maxMs, p50Ms, p90Ms, jitterMs},
 //          download: {avgMbps, minMbps, maxMbps, p50Mbps, p90Mbps, stabilityCv}, upload: {…},
 //          loadedLatency: {download: {…}, upload: {…}, bufferbloatMs},
-//          verdict: 'optimal' | 'good' | 'unstable' | 'critical'}
+//          verdict: 'optimal' | 'good' | 'unstable' | 'critical',
+//          verdictReasons: ['jitter', 'download-stability', …]}
 ```
 
 Tune the run with `config` and the verdict with `thresholds`; defaults live in `@staffetta/core`:
@@ -142,6 +144,7 @@ config: {
   connections: 3,                         // parallel streams per transfer phase
   loadedPingIntervalMs: 250,              // latency probes under load; 0 disables loadedLatency
   sampleIntervalMs: 250,                  // throughput sampling window
+  stabilityIntervalMs: 500,               // windows the stability CV is judged on (multiple of sampleIntervalMs)
   phaseTimeoutMs: 120_000,                // safety timeout per phase
 }
 ```
@@ -156,8 +159,16 @@ as before.
 **Latency under load (bufferbloat).** While download and upload run, the client keeps probing
 the ping endpoint. `loadedLatency` reports the RTT stats per direction plus `bufferbloatMs` —
 the worst-direction median loaded RTT minus the idle median. A connection can be fast and still
-unusable for calls or gaming when its buffers bloat under load; the verdict accounts for it
-(`optimalMaxBufferbloatMs`, `unstableMinBufferbloatMs` in the thresholds).
+unusable for calls or gaming when its buffers bloat under load. In a browser the probes share
+the transfer's HTTP/2 connection (even on another hostname, which gets coalesced), so they also
+wait behind the server's send buffer and overstate the network's bufferbloat: by default it only
+keeps the verdict from `optimal` (`optimalMaxBufferbloatMs`). Set `unstableMinBufferbloatMs` to
+let it report `unstable` when your probes are known to travel on their own connection.
+
+**Why the verdict.** `verdictReasons` lists the measures that held the verdict at its level —
+the failed minimums for `critical`, the tripped thresholds for `unstable`, the missed optimal
+bounds for `good` — and is empty for `optimal`. `assessVerdict` from `@staffetta/core` returns
+the same `{verdict, reasons}` for measures you computed yourself.
 
 The verdict also judges the absolute idle latency, not just its stability: a link with a rock
 solid 300 ms median RTT moves bulk data at full speed and is still unusable interactively, so

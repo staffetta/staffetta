@@ -12,6 +12,7 @@ const views = {
 
 const live = document.getElementById('live')!
 const verdictEl = document.getElementById('verdict')!
+const verdictReasonsEl = document.getElementById('verdict-reasons')!
 const resultsEl = document.getElementById('results')!
 const errorEl = document.getElementById('error')!
 
@@ -95,7 +96,7 @@ async function start() {
         }
       },
     })
-    logLine('run', `done — verdict: ${result.verdict}`)
+    logLine('run', `done — verdict: ${result.verdict}${formatReasons(result)}`)
     renderResult(result)
     show('done')
   } catch (error) {
@@ -111,9 +112,15 @@ async function start() {
   }
 }
 
+function formatReasons(result: SpeedtestResult): string {
+  return result.verdictReasons.length > 0 ? ` (${result.verdictReasons.join(', ')})` : ''
+}
+
 function renderResult(result: SpeedtestResult) {
   verdictEl.textContent = result.verdict
   verdictEl.dataset.verdict = result.verdict
+  verdictReasonsEl.textContent = `held back by ${result.verdictReasons.map(reason => reason.replace('-', ' ')).join(', ')}`
+  verdictReasonsEl.hidden = result.verdictReasons.length === 0
 
   const cells: Array<[string, string, string]> = [
     ['Latency (p50)', result.latency.p50Ms.toFixed(1), 'ms'],

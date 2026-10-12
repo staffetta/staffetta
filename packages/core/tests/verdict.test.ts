@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
 import {describe, it} from 'node:test'
 import {
+  assessVerdict,
   computeVerdict,
+  SpeedtestDefaultThresholds,
   type SpeedtestLatencyStats,
   type SpeedtestLoadedLatency,
   type SpeedtestThroughputStats,
@@ -60,16 +62,16 @@ describe('computeVerdict', () => {
     assert.equal(computeVerdict({latency: latency({p50Ms: 120}), download: throughput(), upload: throughput()}), 'good')
   })
 
-  it('reports unstable on heavy bufferbloat', () => {
-    assert.equal(
-      computeVerdict({
-        latency: latency(),
-        download: throughput(),
-        upload: throughput(),
-        loadedLatency: loadedLatency(150),
-      }),
-      'unstable',
-    )
+  it('caps heavy bufferbloat at good unless the unstable threshold is opted in', () => {
+    const measures = {
+      latency: latency(),
+      download: throughput(),
+      upload: throughput(),
+      loadedLatency: loadedLatency(150),
+    }
+
+    assert.equal(computeVerdict(measures), 'good')
+    assert.equal(computeVerdict(measures, {...SpeedtestDefaultThresholds, unstableMinBufferbloatMs: 100}), 'unstable')
   })
 
   it('reports optimal when jitter and CV are low on both directions', () => {
@@ -123,5 +125,29 @@ describe('computeVerdict', () => {
       ),
       'critical',
     )
+  })
+
+  it('reports the measures that held the verdict at its level', () => {
+    assert.deepEqual(
+      assessVerdict({latency: latency(), download: throughput({avgMbps: 1}), upload: throughput({avgMbps: 0.5})}),
+      {verdict: 'critical', reasons: ['download-throughput', 'upload-throughput']},
+    )
+    assert.deepEqual(
+      assessVerdict({latency: latency({jitterMs: 45}), download: throughput({stabilityCv: 0.2}), upload: throughput()}),
+      {verdict: 'unstable', reasons: ['jitter']},
+    )
+    assert.deepEqual(
+      assessVerdict({
+        latency: latency(),
+        download: throughput({stabilityCv: 0.2}),
+        upload: throughput(),
+        loadedLatency: loadedLatency(60),
+      }),
+      {verdict: 'good', reasons: ['download-stability', 'bufferbloat']},
+    )
+    assert.deepEqual(assessVerdict({latency: latency(), download: throughput(), upload: throughput()}), {
+      verdict: 'optimal',
+      reasons: [],
+    })
   })
 })

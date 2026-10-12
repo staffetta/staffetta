@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import {describe, it} from 'node:test'
 import {
   bytesToMbps,
+  computeJitter,
   computeLatencyStats,
   computeLoadedLatency,
   computeMean,
@@ -9,6 +10,7 @@ import {
   computeStdDev,
   computeThroughputSamplesMbps,
   computeThroughputStats,
+  mergeThroughputSamples,
   resolveWarmupWindowsCount,
   roundTo,
   spreadTransferChunks,
@@ -65,7 +67,38 @@ describe('computeLatencyStats', () => {
   it('reports avg/min/max/percentiles/jitter rounded to one decimal', () => {
     const stats = computeLatencyStats([10, 20, 30])
 
-    assert.deepEqual(stats, {avgMs: 20, minMs: 10, maxMs: 30, p50Ms: 20, p90Ms: 28, jitterMs: 8.2})
+    assert.deepEqual(stats, {avgMs: 20, minMs: 10, maxMs: 30, p50Ms: 20, p90Ms: 28, jitterMs: 10})
+  })
+})
+
+describe('computeJitter', () => {
+  it('averages the absolute differences between consecutive samples', () => {
+    assert.equal(computeJitter([10, 20, 15, 15]), 5)
+  })
+
+  it('keeps a single slow probe from dominating', () => {
+    // 15 × 20 ms + one 150 ms spike: the standard deviation would be ~31.5 ms.
+    assert.equal(roundTo(computeJitter([...Array(15).fill(20), 150]), 1), 8.7)
+  })
+
+  it('returns 0 with fewer than two samples', () => {
+    assert.equal(computeJitter([]), 0)
+    assert.equal(computeJitter([42]), 0)
+  })
+})
+
+describe('mergeThroughputSamples', () => {
+  it('averages runs of consecutive windows', () => {
+    assert.deepEqual(mergeThroughputSamples([60, 140, 60, 140], 2), [100, 100])
+  })
+
+  it('folds a short trailing run into the previous window', () => {
+    assert.deepEqual(mergeThroughputSamples([10, 20, 30, 40, 50], 2), [15, 40])
+  })
+
+  it('passes the samples through with a factor of 1 or less', () => {
+    assert.deepEqual(mergeThroughputSamples([1, 2, 3], 1), [1, 2, 3])
+    assert.deepEqual(mergeThroughputSamples([1, 2, 3], 0), [1, 2, 3])
   })
 })
 
@@ -139,6 +172,13 @@ describe('spreadTransferChunks', () => {
 })
 
 describe('computeThroughputStats', () => {
+  it('judges the CV on the stability samples when given', () => {
+    const stats = computeThroughputStats([60, 140, 60, 140, 60, 140], undefined, [100, 100, 100])
+
+    assert.equal(stats.stabilityCv, 0)
+    assert.equal(stats.minMbps, 60)
+  })
+
   it('prefers the whole-transfer average when provided', () => {
     const stats = computeThroughputStats([10, 20], 14.5)
 

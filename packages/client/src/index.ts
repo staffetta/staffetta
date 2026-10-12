@@ -1,11 +1,12 @@
 import {
+  assessVerdict,
   bytesToMbps,
   computeLatencyStats,
   computeLoadedLatency,
   computeThroughputSamplesMbps,
   computeThroughputStats,
-  computeVerdict,
   decodeUploadReply,
+  mergeThroughputSamples,
   resolveWarmupWindowsCount,
   roundTo,
   type SpeedtestConfig,
@@ -55,6 +56,7 @@ export type {
   SpeedtestResult,
   SpeedtestThroughputStats,
   SpeedtestVerdict,
+  SpeedtestVerdictReason,
   SpeedtestVerdictThresholds,
 } from '@staffetta/core'
 
@@ -148,6 +150,10 @@ export async function runSpeedtest(options: SpeedtestClientOptions): Promise<Spe
   }
 
   const loadedLatency = computeLoadedLatency(latency, download.loadedRttSamplesMs, upload.loadedRttSamplesMs)
+  const assessment = assessVerdict(
+    {latency, download: download.throughput, upload: upload.throughput, loadedLatency},
+    {...SpeedtestDefaultThresholds, ...options.thresholds},
+  )
 
   return {
     timestamp: new Date().toISOString(),
@@ -156,10 +162,8 @@ export async function runSpeedtest(options: SpeedtestClientOptions): Promise<Spe
     download: download.throughput,
     upload: upload.throughput,
     loadedLatency,
-    verdict: computeVerdict(
-      {latency, download: download.throughput, upload: upload.throughput, loadedLatency},
-      {...SpeedtestDefaultThresholds, ...options.thresholds},
-    ),
+    verdict: assessment.verdict,
+    verdictReasons: assessment.reasons,
   }
 }
 
@@ -510,7 +514,8 @@ function assemblePartialResult(
  * (see {@link resolveWarmupWindowsCount}): the configured `warmupMs` is the floor, and it
  * extends until the throughput reaches steady state, so TCP slow start and the size ramp on
  * high-BDP links do not deflate the average or inflate the CV. The average is the
- * whole-transfer rate over the measured range.
+ * whole-transfer rate over the measured range; the CV is judged on `stabilityIntervalMs`
+ * windows merged from the measured ones.
  */
 function computeTransferStats(
   chunks: Array<SpeedtestTransferChunk>,
@@ -527,8 +532,13 @@ function computeTransferStats(
   const statsStartMs = startMs + warmupWindows * config.sampleIntervalMs
 
   const measuredBytes = chunks.reduce((sum, chunk) => (chunk.atMs >= statsStartMs ? sum + chunk.bytes : sum), 0)
+  const measuredSamplesMbps = allSamplesMbps.slice(warmupWindows)
 
-  return computeThroughputStats(allSamplesMbps.slice(warmupWindows), bytesToMbps(measuredBytes, endMs - statsStartMs))
+  return computeThroughputStats(
+    measuredSamplesMbps,
+    bytesToMbps(measuredBytes, endMs - statsStartMs),
+    mergeThroughputSamples(measuredSamplesMbps, Math.round(config.stabilityIntervalMs / config.sampleIntervalMs)),
+  )
 }
 
 /**

@@ -3,6 +3,7 @@ import type {
   SpeedtestLoadedLatency,
   SpeedtestThroughputStats,
   SpeedtestVerdict,
+  SpeedtestVerdictReason,
 } from './types.ts'
 
 /**
@@ -10,9 +11,9 @@ import type {
  * - critical: average throughput below the configured minimum on either direction
  *   (test failures/timeouts are reported as errors upstream, before any verdict exists);
  * - unstable: jitter above `unstableMinJitterMs`, throughput CV above `unstableMinCv`
- *   on at least one direction, bufferbloat above `unstableMinBufferbloatMs`, or idle median
- *   RTT above `unstableMinLatencyMs` — a link that far away is unusable for interactive
- *   traffic (calls, gaming, remote shells) no matter how steady its throughput is;
+ *   on at least one direction, or idle median RTT above `unstableMinLatencyMs` — a link that
+ *   far away is unusable for interactive traffic (calls, gaming, remote shells) no matter how
+ *   steady its throughput is;
  * - optimal: jitter below `optimalMaxJitterMs`, throughput CV below `optimalMaxCv`
  *   on both directions, idle median RTT below `optimalMaxLatencyMs`, and bufferbloat below
  *   `optimalMaxBufferbloatMs` when measured;
@@ -30,7 +31,10 @@ export interface SpeedtestVerdictThresholds {
   unstableMinLatencyMs: number
   unstableMinJitterMs: number
   unstableMinCv: number
-  unstableMinBufferbloatMs: number
+  // Opt-in, unset by default: browser probes share the transfer's HTTP/2 connection (separate
+  // hostnames get coalesced too), so they also queue behind the server's send buffer and
+  // overstate the network's bufferbloat. Set it when the probes are known to travel apart.
+  unstableMinBufferbloatMs?: undefined | number
 }
 
 export const SpeedtestDefaultThresholds: SpeedtestVerdictThresholds = {
@@ -43,40 +47,70 @@ export const SpeedtestDefaultThresholds: SpeedtestVerdictThresholds = {
   unstableMinLatencyMs: 250,
   unstableMinJitterMs: 30,
   unstableMinCv: 0.3,
-  unstableMinBufferbloatMs: 100,
+}
+
+export interface SpeedtestVerdictMeasures {
+  latency: SpeedtestLatencyStats
+  download: SpeedtestThroughputStats
+  upload: SpeedtestThroughputStats
+  loadedLatency?: undefined | SpeedtestLoadedLatency
+}
+
+export interface SpeedtestVerdictAssessment {
+  verdict: SpeedtestVerdict
+  // The measures that held the verdict at its level; empty when optimal.
+  reasons: Array<SpeedtestVerdictReason>
 }
 
 export function computeVerdict(
-  measures: {
-    latency: SpeedtestLatencyStats
-    download: SpeedtestThroughputStats
-    upload: SpeedtestThroughputStats
-    loadedLatency?: undefined | SpeedtestLoadedLatency
-  },
+  measures: SpeedtestVerdictMeasures,
   thresholds: SpeedtestVerdictThresholds = SpeedtestDefaultThresholds,
 ): SpeedtestVerdict {
-  const {latency, download, upload, loadedLatency} = measures
+  return assessVerdict(measures, thresholds).verdict
+}
 
-  if (download.avgMbps < thresholds.minDownloadMbps || upload.avgMbps < thresholds.minUploadMbps) {
-    return 'critical'
+export function assessVerdict(
+  measures: SpeedtestVerdictMeasures,
+  thresholds: SpeedtestVerdictThresholds = SpeedtestDefaultThresholds,
+): SpeedtestVerdictAssessment {
+  const {latency, download, upload, loadedLatency} = measures
+  const bufferbloatMs = loadedLatency?.bufferbloatMs
+
+  const criticalReasons = collectReasons([
+    ['download-throughput', download.avgMbps < thresholds.minDownloadMbps],
+    ['upload-throughput', upload.avgMbps < thresholds.minUploadMbps],
+  ])
+  if (criticalReasons.length > 0) {
+    return {verdict: 'critical', reasons: criticalReasons}
   }
-  if (
-    latency.p50Ms > thresholds.unstableMinLatencyMs ||
-    latency.jitterMs > thresholds.unstableMinJitterMs ||
-    download.stabilityCv > thresholds.unstableMinCv ||
-    upload.stabilityCv > thresholds.unstableMinCv ||
-    (loadedLatency !== undefined && loadedLatency.bufferbloatMs > thresholds.unstableMinBufferbloatMs)
-  ) {
-    return 'unstable'
+
+  const unstableReasons = collectReasons([
+    ['latency', latency.p50Ms > thresholds.unstableMinLatencyMs],
+    ['jitter', latency.jitterMs > thresholds.unstableMinJitterMs],
+    ['download-stability', download.stabilityCv > thresholds.unstableMinCv],
+    ['upload-stability', upload.stabilityCv > thresholds.unstableMinCv],
+    [
+      'bufferbloat',
+      bufferbloatMs !== undefined &&
+        thresholds.unstableMinBufferbloatMs !== undefined &&
+        bufferbloatMs > thresholds.unstableMinBufferbloatMs,
+    ],
+  ])
+  if (unstableReasons.length > 0) {
+    return {verdict: 'unstable', reasons: unstableReasons}
   }
-  if (
-    latency.p50Ms < thresholds.optimalMaxLatencyMs &&
-    latency.jitterMs < thresholds.optimalMaxJitterMs &&
-    download.stabilityCv < thresholds.optimalMaxCv &&
-    upload.stabilityCv < thresholds.optimalMaxCv &&
-    (loadedLatency === undefined || loadedLatency.bufferbloatMs < thresholds.optimalMaxBufferbloatMs)
-  ) {
-    return 'optimal'
-  }
-  return 'good'
+
+  const goodReasons = collectReasons([
+    ['latency', latency.p50Ms >= thresholds.optimalMaxLatencyMs],
+    ['jitter', latency.jitterMs >= thresholds.optimalMaxJitterMs],
+    ['download-stability', download.stabilityCv >= thresholds.optimalMaxCv],
+    ['upload-stability', upload.stabilityCv >= thresholds.optimalMaxCv],
+    ['bufferbloat', bufferbloatMs !== undefined && bufferbloatMs >= thresholds.optimalMaxBufferbloatMs],
+  ])
+
+  return {verdict: goodReasons.length > 0 ? 'good' : 'optimal', reasons: goodReasons}
+}
+
+function collectReasons(checks: Array<[SpeedtestVerdictReason, boolean]>): Array<SpeedtestVerdictReason> {
+  return checks.filter(([, failed]) => failed).map(([reason]) => reason)
 }

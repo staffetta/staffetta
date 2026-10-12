@@ -8,6 +8,7 @@ export type {
   SpeedtestResult,
   SpeedtestStatus,
   SpeedtestVerdict,
+  SpeedtestVerdictReason,
 } from '@staffetta/core'
 
 export type SpeedtestServiceOptions = Omit<SpeedtestClientOptions, 'signal' | 'onPhase' | 'onSample'>

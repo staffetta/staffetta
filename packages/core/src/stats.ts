@@ -12,23 +12,35 @@ export function computeLatencyStats(rttSamplesMs: Array<number>): SpeedtestLaten
     maxMs: roundTo(Math.max(...rttSamplesMs), 1),
     p50Ms: roundTo(computePercentile(rttSamplesMs, 50), 1),
     p90Ms: roundTo(computePercentile(rttSamplesMs, 90), 1),
-    jitterMs: roundTo(computeStdDev(rttSamplesMs), 1),
+    jitterMs: roundTo(computeJitter(rttSamplesMs), 1),
   }
+}
+
+// Mean absolute difference between consecutive samples (the RFC 3550 / Ookla definition): a
+// single slow probe moves it by two deltas, while it would dominate a standard deviation.
+export function computeJitter(rttSamplesMs: Array<number>): number {
+  if (rttSamplesMs.length < 2) {
+    return 0
+  }
+  return computeMean(rttSamplesMs.slice(1).map((rttMs, idx) => Math.abs(rttMs - (rttSamplesMs[idx] ?? rttMs))))
 }
 
 /**
  * The average defaults to the mean of the samples but callers should pass the whole-transfer
  * average (total bytes / total time) when available, which is not skewed by window boundaries.
+ * The CV is computed on `stabilitySamplesMbps` when given (coarser windows, see
+ * {@link mergeThroughputSamples}), on the samples otherwise.
  */
 export function computeThroughputStats(
   samplesMbps: Array<number>,
   avgMbps?: undefined | number,
+  stabilitySamplesMbps?: undefined | Array<number>,
 ): SpeedtestThroughputStats {
   const mean = computeMean(samplesMbps)
   // The CV drives the verdict, so it excludes the single best and worst window: an isolated
   // sampling artifact (a burst or a scheduling gap of the harness) is not instability, a
   // pattern of dips is. min/max stay raw — they are descriptive, not judged.
-  const stabilitySamples = trimExtremes(samplesMbps)
+  const stabilitySamples = trimExtremes(stabilitySamplesMbps ?? samplesMbps)
   const stabilityMean = computeMean(stabilitySamples)
 
   return {
@@ -148,6 +160,28 @@ export function computeThroughputSamplesMbps(
     const windowMs = idx === windowsCount - 1 ? totalMs - idx * intervalMs : intervalMs
     return bytesToMbps(bytes, windowMs)
   })
+}
+
+// Averages each run of `factor` consecutive windows into one coarser window; a trailing run
+// shorter than `factor` folds into the previous one instead of becoming a noisy short window.
+// Bursty delivery (one TCP flow, a busy event loop) swings short windows without meaning the
+// link is unstable, so the CV is judged on the coarser grid.
+export function mergeThroughputSamples(samplesMbps: Array<number>, factor: number): Array<number> {
+  const size = Math.max(1, Math.floor(factor))
+  const groups: Array<Array<number>> = []
+
+  for (let idx = 0; idx < samplesMbps.length; idx += size) {
+    const group = samplesMbps.slice(idx, idx + size)
+    const previous = groups.at(-1)
+
+    if (group.length < size && previous) {
+      previous.push(...group)
+    } else {
+      groups.push(group)
+    }
+  }
+
+  return groups.map(computeMean)
 }
 
 /**

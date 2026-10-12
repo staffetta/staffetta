@@ -2,6 +2,15 @@ export type SpeedtestPhase = 'ping' | 'download' | 'upload'
 
 export type SpeedtestVerdict = 'optimal' | 'good' | 'unstable' | 'critical'
 
+export type SpeedtestVerdictReason =
+  | 'download-throughput'
+  | 'upload-throughput'
+  | 'latency'
+  | 'jitter'
+  | 'download-stability'
+  | 'upload-stability'
+  | 'bufferbloat'
+
 export interface SpeedtestConfig {
   /** Measured ping requests (an extra warm-up request is always sent first and discarded). */
   pingCount: number
@@ -34,6 +43,9 @@ export interface SpeedtestConfig {
   loadedPingIntervalMs: number
   /** Width of the throughput sampling window. */
   sampleIntervalMs: number
+  // Width of the windows the stability CV is judged on, rounded to a multiple of
+  // `sampleIntervalMs`: short windows swing on bursty delivery without the link being unstable.
+  stabilityIntervalMs: number
   /** Safety timeout applied to each phase. */
   phaseTimeoutMs: number
 }
@@ -47,6 +59,7 @@ export const SpeedtestDefaultConfig: SpeedtestConfig = {
   connections: 3,
   loadedPingIntervalMs: 250,
   sampleIntervalMs: 250,
+  stabilityIntervalMs: 500,
   phaseTimeoutMs: 120_000,
 }
 
@@ -58,7 +71,7 @@ export interface SpeedtestLatencyStats {
   p50Ms: number
   /** 90th percentile RTT. */
   p90Ms: number
-  /** Standard deviation of the RTT samples. */
+  /** Mean absolute difference between consecutive RTT samples. */
   jitterMs: number
 }
 
@@ -71,9 +84,9 @@ export interface SpeedtestThroughputStats {
   /** 90th percentile of the windowed throughput samples. */
   p90Mbps: number
   /**
-   * Coefficient of variation (standard deviation / mean) of the throughput samples, computed
-   * excluding the single best and worst window: an isolated sampling artifact is not
-   * instability, a pattern of dips is.
+   * Coefficient of variation (standard deviation / mean) of the throughput over
+   * `stabilityIntervalMs` windows, computed excluding the single best and worst window: an
+   * isolated sampling artifact is not instability, a pattern of dips is.
    */
   stabilityCv: number
 }
@@ -115,6 +128,8 @@ export interface SpeedtestResult {
   /** Absent when the probes are disabled (`loadedPingIntervalMs: 0`) or produced no samples. */
   loadedLatency?: undefined | SpeedtestLoadedLatency
   verdict: SpeedtestVerdict
+  // The measures that held the verdict below optimal; empty when optimal.
+  verdictReasons: Array<SpeedtestVerdictReason>
 }
 
 /**

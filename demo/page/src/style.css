@@ -231,6 +231,12 @@ button:focus-visible {
 .verdict[data-verdict='unstable'] { color: var(--unstable); }
 .verdict[data-verdict='critical'] { color: var(--critical); }
 
+.verdict-reasons {
+  margin: -0.5rem 0 0;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+}
+
 .results {
   margin: 0;
   width: 100%;
