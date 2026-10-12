@@ -1,6 +1,6 @@
 {
   "name": "@staffetta/angular",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Angular bindings for the staffetta speedtest client: a signal-based SpeedtestService with status, live log, start and cancel.",
   "license": "MIT",
   "type": "module",

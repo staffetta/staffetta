@@ -118,7 +118,7 @@ import {runSpeedtest} from '@staffetta/client'
 
 const result = await runSpeedtest({
   baseUrl: 'https://api.example.com',
-  headers: () => ({authorization: `Bearer ${getToken()}`}), // resolved before each request
+  headers: () => ({authorization: `Bearer ${getToken()}`}), // resolved before each transfer request
   signal: abortController.signal,
   onPhase: phase => console.log(`— ${phase}`),
   onSample: sample => console.log(sample),
@@ -235,6 +235,53 @@ export class SpeedtestPanel {
 The service is decorator-free (plain class + signals), so the package ships as regular ESM
 with no Angular compiler in the loop; `provideSpeedtest()` registers it in a component's
 `providers` (one test per component, aborted on destroy) or in the bootstrap providers.
+
+## Measuring accurately
+
+The math is only as good as the timestamps it is fed. These are the pitfalls found running
+staffetta against real deployments; most of them make a good link look `unstable`.
+
+**Run the client off the main thread.** `runSpeedtest` only needs `fetch`, so it runs as is in a
+Web Worker. On the main thread, any UI work (re-renders, incoming notifications, a development
+build of your framework) delays the moment a response is observed: idle pings get spikes that
+inflate the jitter, and body chunks are read in bursts that fake throughput stalls. Forward
+`onPhase`/`onSample` to the page with `postMessage`, and cancel by terminating the worker.
+
+**Disable reverse-proxy buffering on the download.** nginx buffers the upstream response by
+default and forwards it in bursts: the throughput windows alternate between zero and spikes,
+and the latency probes queue behind the buffered data. The fetch handler replies
+`X-Accel-Buffering: no` on the download; add it yourself if you wire the raw primitives into your
+own endpoints (or set `proxy_buffering off` on their location). nginx also buffers request
+bodies (`proxy_request_buffering`): the upload still measures correctly, since the client falls
+back to its own clock when the server reports an implausibly short receive time.
+
+**Mind cross-origin requests.** When the page and the server live on different origins, a
+request carrying a custom header (e.g. an auth header) or the upload's
+`application/octet-stream` body is preceded by a CORS preflight. Chromium does not reuse cached
+preflights for `cache: 'no-store'` requests, which the client uses to keep caches out of the
+measurement, so each such request pays an extra round trip. The client therefore sends the
+`headers` option on download and upload only: ping is anonymous by design and stays a simple
+request, otherwise every probe would measure twice the real RTT. Serve the page from the same
+origin as the server when you can, so the transfers skip the preflight too.
+
+**Latency under load is pessimistic in browsers.** The probes share the transfer's HTTP/2
+connection, also when they target another hostname (browsers coalesce connections to the same
+IP and certificate), so they wait behind the server's send buffer as well as the network's
+queues. This is why bufferbloat alone does not report `unstable` by default.
+
+**Upload stability is coarse.** `fetch` cannot observe an upload in progress, so each POST is
+spread uniformly over its duration and the upload CV mostly reflects the variation between
+POSTs, not within them.
+
+**Browser throttling is not a degraded network.** Chrome DevTools throttling adds latency per
+request and caps the overall rate; its packet loss, queue and reordering settings apply to
+WebRTC only. "Disable cache" also disables the preflight cache. Use an OS-level shaper (macOS
+Network Link Conditioner, `dnctl`/`pfctl`, Linux `tc netem`) to test real loss.
+
+**Comparing with public speedtests.** Ookla or fast.com measure to a nearby server dedicated to
+the test and report averages. staffetta measures to *your* server through its whole stack
+(CDN, reverse proxy, application) and judges the stability as well, which is the point: the
+same line can be fast towards a speedtest server and irregular towards your application.
 
 ## The protocol
 

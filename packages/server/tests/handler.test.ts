@@ -21,6 +21,7 @@ describe('createSpeedtestFetchHandler', () => {
     assert.equal(response.status, 200)
     assert.equal(response.headers.get('content-type'), 'application/octet-stream')
     assert.equal(response.headers.get('content-length'), '100000')
+    assert.equal(response.headers.get('x-accel-buffering'), 'no')
 
     const body = await response.arrayBuffer()
     assert.equal(body.byteLength, 100_000)

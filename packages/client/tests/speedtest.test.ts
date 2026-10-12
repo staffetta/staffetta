@@ -86,14 +86,18 @@ describe('runSpeedtest', () => {
     assert.equal(result.loadedLatency, undefined)
   })
 
-  it('resolves custom headers before each request', async () => {
-    let resolved = 0
+  it('sends custom headers on transfers only, keeping pings header-free', async () => {
+    const authorizationByPath = new Map<string, Set<null | string>>()
 
     await runSpeedtest({
       baseUrl,
-      headers: () => {
-        resolved += 1
-        return {authorization: 'Bearer test'}
+      headers: () => ({authorization: 'Bearer test'}),
+      fetch: (input, init) => {
+        const path = new URL(String(input)).pathname
+        const seen = authorizationByPath.get(path) ?? new Set()
+        seen.add(new Headers(init?.headers).get('authorization'))
+        authorizationByPath.set(path, seen)
+        return fetch(input, init)
       },
       config: {
         pingCount: 1,
@@ -106,9 +110,9 @@ describe('runSpeedtest', () => {
       },
     })
 
-    // At least warm-up + 1 ping + 1 download + 1 upload; the duration-based
-    // transfer phases issue as many requests as fit in the window.
-    assert.ok(resolved >= 4)
+    assert.deepEqual(authorizationByPath.get('/speedtest/ping'), new Set([null]))
+    assert.deepEqual(authorizationByPath.get('/speedtest/download'), new Set(['Bearer test']))
+    assert.deepEqual(authorizationByPath.get('/speedtest/upload'), new Set(['Bearer test']))
   })
 
   it('reports the partial result when a phase times out', async () => {

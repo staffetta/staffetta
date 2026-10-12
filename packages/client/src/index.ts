@@ -65,7 +65,11 @@ export interface SpeedtestClientOptions {
   baseUrl: string
   /** Endpoint paths appended to `baseUrl`. Default: `/speedtest/{ping,download,upload}`. */
   paths?: undefined | Partial<SpeedtestPaths>
-  /** Extra request headers (e.g. authorization), static or resolved before each request. */
+  /**
+   * Extra request headers (e.g. authorization), static or resolved before each request. Sent on
+   * download and upload only: the ping stays header-free, so cross-origin it is a CORS simple
+   * request instead of paying a preflight round trip on every probe.
+   */
   headers?: undefined | HeadersInit | (() => HeadersInit | Promise<HeadersInit>)
   /** Custom fetch implementation (interceptors, environments without a global fetch). */
   fetch?: undefined | typeof fetch
@@ -698,7 +702,7 @@ function createUploadProgressEmitter(context: SpeedtestContext, startMs: number)
 }
 
 async function requestPing(context: SpeedtestContext, signal: AbortSignal): Promise<void> {
-  const response = await request(context, 'GET', context.paths.ping, {signal})
+  const response = await request(context, 'GET', context.paths.ping, {signal, anonymous: true})
   assertResponseOk(response, 'ping')
   await response.arrayBuffer() // Consumes the tiny body so the RTT covers the whole response.
 }
@@ -722,9 +726,14 @@ async function request(
   context: SpeedtestContext,
   method: 'GET' | 'POST',
   pathAndQuery: string,
-  args: {signal: AbortSignal; body?: undefined | Blob; contentType?: undefined | string},
+  args: {
+    signal: AbortSignal
+    body?: undefined | Blob
+    contentType?: undefined | string
+    anonymous?: undefined | boolean
+  },
 ): Promise<Response> {
-  const headers = new Headers(typeof context.headers === 'function' ? await context.headers() : context.headers)
+  const headers = args.anonymous ? new Headers() : await resolveHeaders(context)
 
   if (args.contentType) {
     headers.set('content-type', args.contentType)
@@ -737,6 +746,10 @@ async function request(
     cache: 'no-store',
     signal: args.signal,
   })
+}
+
+async function resolveHeaders(context: SpeedtestContext): Promise<Headers> {
+  return new Headers(typeof context.headers === 'function' ? await context.headers() : context.headers)
 }
 
 function createPhaseSignal(context: SpeedtestContext): {signal: AbortSignal; timedOut: () => boolean} {

@@ -68,6 +68,8 @@ function handleDownload(url: URL, maxSizeBytes: number): Response {
       'content-type': 'application/octet-stream',
       'content-length': String(size),
       'cache-control': 'no-store',
+      // Reverse proxies (nginx) would otherwise buffer the stream and forward it in bursts.
+      'x-accel-buffering': 'no',
     },
   })
 }
